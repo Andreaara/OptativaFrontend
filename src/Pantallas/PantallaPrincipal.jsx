@@ -152,15 +152,7 @@ export default function PantallaServiciosAWS() {
         </div>
       )}
 
-      {/* Buscador */}
-      <div style={{ marginBottom: '16px' }}>
-        <Input 
-          label="Buscar servicio"
-          placeholder="Buscar por ID, nombre o categoría..."
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-        />
-      </div>
+      
 
       {/* Tabla de Servicios */}
       {cargando && <p style={{ textAlign: 'center' }}>Cargando datos desde AWS...</p>}

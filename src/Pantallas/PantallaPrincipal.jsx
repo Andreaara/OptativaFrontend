@@ -3,6 +3,8 @@ import Input from '../Componentes/Input';
 import '../Estilos/Estilos.css';
 
 
+const CLAVE_API = 'JacksonGuapo123';
+
 const API_URLS = {
   POST: 'https://y4kx0y3xqi.execute-api.us-east-1.amazonaws.com',
   PUT: 'https://h35bqwysm2.execute-api.us-east-1.amazonaws.com',
@@ -89,7 +91,10 @@ export default function PantallaServiciosAWS() {
     try {
       const response = await fetch(url, {
         method: metodo,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-validador': CLAVE_API
+        },
         body: JSON.stringify(formData),
       });
 
@@ -122,8 +127,13 @@ export default function PantallaServiciosAWS() {
 
     try {
       const response = await fetch(
-        `${API_URLS.DELETE}?servicio_id=${servicioAEliminar.servicio_id}`,
-        { method: 'DELETE' }
+          `${API_URLS.DELETE}?servicio_id=${servicioAEliminar.servicio_id}`,
+          {
+            method: 'DELETE',
+            headers: {
+              'x-validador': CLAVE_API
+            }
+          }
       );
 
       const resData = await response.json();

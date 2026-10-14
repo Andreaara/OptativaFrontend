@@ -48,7 +48,9 @@ export default function PantallaServiciosAWS() {
     setCargando(true);
     setErrorApi(null);
     try {
-      const response = await fetch(API_URLS.GET);
+      const response = await fetch(API_URLS.GET, {
+        headers: { 'x-validador': CLAVE_API }
+      });
       if (!response.ok) throw new Error(`Error ${response.status}: No se pudieron cargar los servicios`);
       const data = await response.json();
       setServicios(Array.isArray(data) ? data : []);

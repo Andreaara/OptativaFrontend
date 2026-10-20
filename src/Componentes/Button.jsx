@@ -3,12 +3,19 @@ import '../Estilos/Estilos.css';
 
 // Botón de Agregar
 export function AddButton({ onClick, children = "Agregar", type = "button" }) {
-  return (
-    <button type={type} className="button-agregar" onClick={onClick}>
-      <span className="material-symbols-outlined">add</span>
-      <span>{children}</span>
-    </button>
-  );
+    return (
+        <button
+            type={type}
+            className="btn-icono btn-icono--primario btn-icono--grande"
+            onClick={onClick}
+            title={children}
+            aria-label={children}
+            style={{ width: 'auto', padding: '0 16px', gap: '8px' }}
+        >
+            <span className="material-symbols-outlined">add</span>
+            <span style={{ fontSize: '0.95rem', fontWeight: 600 }}>{children}</span>
+        </button>
+    );
 }
 
 // Botón de Eliminar

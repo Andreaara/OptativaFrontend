@@ -1,10 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Input from '../Componentes/Input.jsx';
 import { AddButton, EditButton, DeleteButton } from '../Componentes/Button.jsx';
+import { apiFetch } from '../Utils/api.js';
 import '../Estilos/Estilos.css';
 
 export default function FacturaDetalles() {
     const [detalles, setDetalles] = useState([]);
+    const [cargando, setCargando] = useState(false);
+    const [errorApi, setErrorApi] = useState(null);
+    const [cfdiJson, setCfdiJson] = useState(null);
+
     const [formData, setFormData] = useState({
         detalle_id: null,
         factura_id: '',
@@ -19,11 +24,27 @@ export default function FacturaDetalles() {
     const [modalEliminarOpen, setModalEliminarOpen] = useState(false);
     const [detalleAEliminar, setDetalleAEliminar] = useState(null);
 
+    const cargarDetalles = async () => {
+        setCargando(true);
+        setErrorApi(null);
+        try {
+            const data = await apiFetch('/detalles');
+            setDetalles(Array.isArray(data) ? data : []);
+        } catch (err) {
+            setErrorApi(err.message);
+        } finally {
+            setCargando(false);
+        }
+    };
+
+    useEffect(() => {
+        cargarDetalles();
+    }, []);
+
     const handleChange = (e) => {
         const { name, value } = e.target;
         const updatedForm = { ...formData, [name]: value };
 
-        // Auto-calcular subtotal si cambia cantidad o precio unitario
         if (name === 'cantidad' || name === 'precio_unitario') {
             const cant = parseFloat(updatedForm.cantidad) || 0;
             const precio = parseFloat(updatedForm.precio_unitario) || 0;
@@ -57,24 +78,37 @@ export default function FacturaDetalles() {
         setModalOpen(true);
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
+        setCargando(true);
+        setErrorApi(null);
 
-        if (editando) {
-            setDetalles((prev) =>
-                prev.map((item) =>
-                    item.detalle_id === formData.detalle_id ? { ...formData } : item
-                )
-            );
-        } else {
-            const nuevoDetalle = {
-                ...formData,
-                detalle_id: Date.now().toString(),
-            };
-            setDetalles((prev) => [...prev, nuevoDetalle]);
+        try {
+            if (editando) {
+                setDetalles((prev) =>
+                    prev.map((item) =>
+                        item.detalle_id === formData.detalle_id ? { ...formData } : item
+                    )
+                );
+            } else {
+                // Al insertar detalle en RDS, se disparan los SP de cálculo de IVA, descuentos y actualización de encabezado
+                await apiFetch('/detalles', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        factura_id: Number(formData.factura_id),
+                        servicio_id: formData.servicio_id.trim(),
+                        cantidad: Number(formData.cantidad),
+                        precio_unitario: parseFloat(formData.precio_unitario),
+                    }),
+                });
+                await cargarDetalles();
+            }
+            resetForm();
+        } catch (err) {
+            setErrorApi(err.message);
+        } finally {
+            setCargando(false);
         }
-
-        resetForm();
     };
 
     const handleAbrirEliminar = (item) => {
@@ -97,14 +131,28 @@ export default function FacturaDetalles() {
         setDetalleAEliminar(null);
     };
 
+    // Ejecuta sp_obtener_cfdi_json para una factura
+    const handleVerCfdi = async (facturaId) => {
+        setCargando(true);
+        setErrorApi(null);
+        try {
+            const data = await apiFetch(`/reportes?tipo=cfdi&factura_id=${facturaId}`);
+            setCfdiJson(data);
+        } catch (err) {
+            setErrorApi(err.message);
+        } finally {
+            setCargando(false);
+        }
+    };
+
     return (
         <div className="pantalla-principal-container">
-            {/* HEADER DE LA PANTALLA */}
+            {/* HEADER */}
             <div className="pantalla-header">
                 <div className="pantalla-titulo">
-          <span className="titulo-icono">
-            <span className="material-symbols-outlined">description</span>
-          </span>
+                    <span className="titulo-icono">
+                        <span className="material-symbols-outlined">description</span>
+                    </span>
                     <div>
                         <h2>Detalles de Facturas</h2>
                         <p>
@@ -116,68 +164,103 @@ export default function FacturaDetalles() {
                 <AddButton onClick={handleAbrirCrear}>Agregar Detalle</AddButton>
             </div>
 
-            {/* TABLA DE DETALLES */}
-            <div className="tabla-contenedor">
-                <table className="tabla-servicios">
-                    <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Factura ID</th>
-                        <th>Servicio ID</th>
-                        <th>Cantidad</th>
-                        <th>P. Unitario</th>
-                        <th>Subtotal</th>
-                        <th className="col-acciones">Acciones</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    {detalles.length === 0 ? (
+            {errorApi && (
+                <div className="alerta-error" role="alert">
+                    <span className="material-symbols-outlined">error</span> {errorApi}
+                </div>
+            )}
+
+            {cfdiJson && (
+                <div className="modal-contenido" style={{ marginBottom: '16px', padding: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <strong>Comprobante CFDI JSON (Stored Procedure)</strong>
+                        <button type="button" className="btn-cancelar" onClick={() => setCfdiJson(null)}>
+                            Cerrar JSON
+                        </button>
+                    </div>
+                    <pre style={{ background: '#1e1b4b', color: '#e0e7ff', padding: '12px', borderRadius: '8px', overflowX: 'auto', fontSize: '12px' }}>
+                        {JSON.stringify(cfdiJson, null, 2)}
+                    </pre>
+                </div>
+            )}
+
+            {cargando && (
+                <div className="cargando-texto">
+                    <span className="spinner" /> Sincronizando detalles con AWS...
+                </div>
+            )}
+
+            {/* TABLA */}
+            {!cargando && (
+                <div className="tabla-contenedor">
+                    <table className="tabla-servicios">
+                        <thead>
                         <tr>
-                            <td colSpan="7">
-                                <div className="tabla-vacia">
-                                    <span className="material-symbols-outlined">inbox</span>
-                                    <span>No hay detalles registrados</span>
-                                </div>
-                            </td>
+                            <th>ID</th>
+                            <th>Factura ID</th>
+                            <th>Servicio ID</th>
+                            <th>Cantidad</th>
+                            <th>P. Unitario</th>
+                            <th>Subtotal</th>
+                            <th className="col-acciones">Acciones</th>
                         </tr>
-                    ) : (
-                        detalles.map((item) => (
-                            <tr key={item.detalle_id} className="fila-servicio">
-                                <td>
-                                    <span className="texto-id">{item.detalle_id}</span>
-                                </td>
-                                <td>
-                                    <span className="texto-id">{item.factura_id}</span>
-                                </td>
-                                <td>
-                                    <span className="texto-id">{item.servicio_id}</span>
-                                </td>
-                                <td>{item.cantidad}</td>
-                                <td>${parseFloat(item.precio_unitario || 0).toFixed(2)}</td>
-                                <td>
-                                    <strong>${parseFloat(item.subtotal || 0).toFixed(2)}</strong>
-                                </td>
-                                <td>
-                                    <div className="acciones-tabla">
-                                        <EditButton onClick={() => handleEdit(item)} />
-                                        <DeleteButton onClick={() => handleAbrirEliminar(item)} />
+                        </thead>
+                        <tbody>
+                        {detalles.length === 0 ? (
+                            <tr>
+                                <td colSpan="7">
+                                    <div className="tabla-vacia">
+                                        <span className="material-symbols-outlined">inbox</span>
+                                        <span>No hay detalles registrados</span>
                                     </div>
                                 </td>
                             </tr>
-                        ))
-                    )}
-                    </tbody>
-                </table>
-            </div>
+                        ) : (
+                            detalles.map((item) => (
+                                <tr key={item.detalle_id} className="fila-servicio">
+                                    <td>
+                                        <span className="texto-id">{item.detalle_id}</span>
+                                    </td>
+                                    <td>
+                                        <span className="texto-id">{item.factura_id}</span>
+                                    </td>
+                                    <td>
+                                        <span className="texto-id">{item.servicio_id}</span>
+                                    </td>
+                                    <td>{item.cantidad}</td>
+                                    <td>${parseFloat(item.precio_unitario || 0).toFixed(2)}</td>
+                                    <td>
+                                        <strong>${parseFloat(item.subtotal || 0).toFixed(2)}</strong>
+                                    </td>
+                                    <td>
+                                        <div className="acciones-tabla">
+                                            <button
+                                                type="button"
+                                                title="Ver CFDI JSON"
+                                                onClick={() => handleVerCfdi(item.factura_id)}
+                                            >
+                                                <span className="material-symbols-outlined">data_object</span>
+                                            </button>
+                                            <EditButton onClick={() => handleEdit(item)} />
+                                            <DeleteButton onClick={() => handleAbrirEliminar(item)} />
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))
+                        )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
 
-            {/* MODAL PARA CREAR / EDITAR DETALLE */}
+            {/* MODAL CREAR / EDITAR */}
             {modalOpen && (
                 <div className="modal-overlay" onClick={resetForm}>
                     <div className="modal-contenido" onClick={(e) => e.stopPropagation()}>
                         <h3>
-              <span className="material-symbols-outlined">
-                {editando ? 'edit_square' : 'add_circle'}
-              </span>
+                            <span className="material-symbols-outlined">
+                                {editando ? 'edit_square' : 'add_circle'}
+                            </span>
                             {editando ? 'Editar Detalle' : 'Agregar Detalle'}
                         </h3>
 
@@ -192,11 +275,12 @@ export default function FacturaDetalles() {
                                     required
                                 />
                                 <Input
-                                    label="Servicio ID (FK)"
-                                    type="number"
+                                    label="ID del Servicio"
+                                    type="text"
                                     name="servicio_id"
                                     value={formData.servicio_id}
                                     onChange={handleChange}
+                                    placeholder="Ej. E-098"
                                     required
                                 />
                             </div>
@@ -222,7 +306,7 @@ export default function FacturaDetalles() {
                             </div>
 
                             <Input
-                                label="Subtotal ($)"
+                                label="Subtotal Estimado ($)"
                                 type="number"
                                 step="0.01"
                                 name="subtotal"
@@ -244,7 +328,7 @@ export default function FacturaDetalles() {
                 </div>
             )}
 
-            {/* MODAL PARA ELIMINAR DETALLE */}
+            {/* MODAL ELIMINAR */}
             {modalEliminarOpen && detalleAEliminar && (
                 <div className="modal-overlay" onClick={() => setModalEliminarOpen(false)}>
                     <div className="modal-contenido" onClick={(e) => e.stopPropagation()}>
@@ -254,8 +338,8 @@ export default function FacturaDetalles() {
                         </h3>
 
                         <p className="texto-confirmacion">
-                            ¿Seguro que deseas eliminar este detalle ({' '}
-                            <span className="texto-id">{detalleAEliminar.detalle_id}</span> )? Esta acción no
+                            ¿Seguro que deseas eliminar este detalle (
+                            <span className="texto-id">{detalleAEliminar.detalle_id}</span>)? Esta acción no
                             se puede deshacer.
                         </p>
 

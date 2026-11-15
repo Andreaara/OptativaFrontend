@@ -622,3 +622,43 @@ html, body, #root {
         justify-content: center;
     }
 }
+
+/* Estilos para los botones de acciones en las tablas */
+.acciones-tabla {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.acciones-tabla button,
+.btn-icono {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    background-color: #f3e8ff;
+    color: #6b21a8;
+    transition: all 0.2s ease;
+}
+
+.acciones-tabla button:hover,
+.btn-icono:hover {
+    background-color: #e9d5ff;
+    transform: translateY(-1px);
+}
+
+/* Botón eliminar (el segundo botón de acciones o variante eliminar) */
+.acciones-tabla button:last-child,
+.btn-icono--eliminar {
+    background-color: #fee2e2;
+    color: #dc2626;
+}
+
+.acciones-tabla button:last-child:hover,
+.btn-icono--eliminar:hover {
+    background-color: #fecaca;
+}

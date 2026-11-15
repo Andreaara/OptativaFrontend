@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
-
+import React, { useState, useEffect } from 'react';
+import Input from '../Componentes/Input.jsx';
+import { AddButton, EditButton, DeleteButton } from '../Componentes/Button.jsx';
+import { apiFetch } from '../Utils/api.js';
+import '../Estilos/Estilos.css';
 
 export default function Pagos() {
-    // Estado para la lista de pagos (sin estado inicial)
     const [pagos, setPagos] = useState([]);
+    const [cargando, setCargando] = useState(false);
+    const [errorApi, setErrorApi] = useState(null);
+    const [antiguedad, setAntiguedad] = useState(null);
 
-
-    // Estado para el formulario de pago
     const [formData, setFormData] = useState({
         pago_id: null,
         factura_id: '',
@@ -15,21 +18,34 @@ export default function Pagos() {
         fecha_pago: '',
     });
 
-
     const [editando, setEditando] = useState(false);
+    const [modalOpen, setModalOpen] = useState(false);
 
-
-    // Manejar el cambio de datos en los campos
-    const handleChange = (e) => {
-        const { name, value } = e.target;
-        setFormData({
-            ...formData,
-            [name]: value,
-        });
+    const cargarPagos = async () => {
+        setCargando(true);
+        setErrorApi(null);
+        try {
+            const data = await apiFetch('/pagos');
+            setPagos(Array.isArray(data) ? data : []);
+        } catch (err) {
+            setErrorApi(err.message);
+        } finally {
+            setCargando(false);
+        }
     };
 
+    useEffect(() => {
+        cargarPagos();
+    }, []);
 
-    // Limpiar el formulario
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setFormData((prev) => ({
+            ...prev,
+            [name]: value,
+        }));
+    };
+
     const resetForm = () => {
         setFormData({
             pago_id: null,
@@ -39,328 +55,254 @@ export default function Pagos() {
             fecha_pago: '',
         });
         setEditando(false);
+        setModalOpen(false);
     };
 
-
-    // Crear o Editar Pago
-    const handleSubmit = (e) => {
-        e.preventDefault();
-
-
-        if (editando) {
-            setPagos(
-                pagos.map((item) =>
-                    item.pago_id === formData.pago_id ? { ...formData } : item
-                )
-            );
-        } else {
-            const nuevoPago = {
-                ...formData,
-                pago_id: Date.now(), // Simulación de ID
-            };
-            setPagos([...pagos, nuevoPago]);
-        }
-
-
+    const handleAbrirCrear = () => {
         resetForm();
+        setModalOpen(true);
     };
 
-
-    // Cargar registro para editar
     const handleEdit = (pago) => {
         setFormData(pago);
         setEditando(true);
+        setModalOpen(true);
     };
 
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setCargando(true);
+        setErrorApi(null);
 
-    // Eliminar registro de pago
+        try {
+            if (editando) {
+                setPagos((prev) =>
+                    prev.map((item) =>
+                        item.pago_id === formData.pago_id ? { ...formData } : item
+                    )
+                );
+            } else {
+                await apiFetch('/pagos', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        factura_id: Number(formData.factura_id),
+                        monto: parseFloat(formData.monto),
+                        tipo_tarjeta: formData.tipo_tarjeta,
+                    }),
+                });
+                await cargarPagos();
+            }
+            resetForm();
+        } catch (err) {
+            setErrorApi(err.message);
+        } finally {
+            setCargando(false);
+        }
+    };
+
     const handleDelete = (pago_id) => {
         if (window.confirm('¿Estás seguro de que deseas eliminar este registro de pago?')) {
-            setPagos(pagos.filter((item) => item.pago_id !== pago_id));
+            setPagos((prev) => prev.filter((item) => item.pago_id !== pago_id));
             if (formData.pago_id === pago_id) {
                 resetForm();
             }
         }
     };
 
+    const handleVerAntiguedad = async () => {
+        setCargando(true);
+        setErrorApi(null);
+        try {
+            const data = await apiFetch('/reportes?tipo=antiguedad');
+            setAntiguedad(Array.isArray(data) ? data : []);
+        } catch (err) {
+            setErrorApi(err.message);
+        } finally {
+            setCargando(false);
+        }
+    };
 
     return (
-        <div style={styles.container}>
-            <h1 style={styles.title}>Gestión de Pagos</h1>
-
-
-            <div style={styles.content}>
-                {/* FORMULARIO */}
-                <div style={styles.card}>
-                    <h2 style={styles.subtitle}>
-                        {editando ? 'Editar Pago' : 'Registrar Nuevo Pago'}
-                    </h2>
-
-
-                    <form onSubmit={handleSubmit} style={styles.form}>
-                        <div style={styles.inputGroup}>
-                            <label style={styles.label}>ID Factura (FK)</label>
-                            <input
-                                type="number"
-                                name="factura_id"
-                                value={formData.factura_id}
-                                onChange={handleChange}
-                                placeholder="ID de la factura vinculada"
-                                style={styles.input}
-                                required
-                            />
-                        </div>
-
-
-                        <div style={styles.inputGroup}>
-                            <label style={styles.label}>Monto ($)</label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                name="monto"
-                                value={formData.monto}
-                                onChange={handleChange}
-                                placeholder="0.00"
-                                style={styles.input}
-                                required
-                            />
-                        </div>
-
-
-                        <div style={styles.inputGroup}>
-                            <label style={styles.label}>Tipo de Tarjeta</label>
-                            <select
-                                name="tipo_tarjeta"
-                                value={formData.tipo_tarjeta}
-                                onChange={handleChange}
-                                style={styles.input}
-                                required
-                            >
-                                <option value="">Seleccionar tipo...</option>
-                                <option value="Crédito">Crédito</option>
-                                <option value="Débito">Débito</option>
-                                <option value="Prepago">Prepago</option>
-                                <option value="Corporativa">Corporativa</option>
-                            </select>
-                        </div>
-
-
-                        <div style={styles.inputGroup}>
-                            <label style={styles.label}>Fecha de Pago</label>
-                            <input
-                                type="datetime-local"
-                                name="fecha_pago"
-                                value={formData.fecha_pago}
-                                onChange={handleChange}
-                                style={styles.input}
-                                required
-                            />
-                        </div>
-
-
-                        <div style={styles.buttonGroup}>
-                            <button type="submit" style={styles.btnPrimary}>
-                                {editando ? 'Guardar Cambios' : 'Registrar Pago'}
-                            </button>
-                            {editando && (
-                                <button
-                                    type="button"
-                                    onClick={resetForm}
-                                    style={styles.btnSecondary}
-                                >
-                                    Cancelar
-                                </button>
-                            )}
-                        </div>
-                    </form>
-                </div>
-
-
-                {/* TABLA DE PAGOS */}
-                <div style={{ ...styles.card, flex: 2 }}>
-                    <h2 style={styles.subtitle}>Historial de Pagos</h2>
-
-
-                    <div style={styles.tableContainer}>
-                        <table style={styles.table}>
-                            <thead>
-                            <tr style={styles.tableHeader}>
-                                <th style={styles.th}>ID Pago</th>
-                                <th style={styles.th}>ID Factura</th>
-                                <th style={styles.th}>Monto</th>
-                                <th style={styles.th}>Tipo de Tarjeta</th>
-                                <th style={styles.th}>Fecha de Pago</th>
-                                <th style={styles.th}>Acciones</th>
-                            </tr>
-                            </thead>
-                            <tbody>
-                            {pagos.length === 0 ? (
-                                <tr>
-                                    <td colSpan="6" style={styles.emptyText}>
-                                        No hay pagos registrados.
-                                    </td>
-                                </tr>
-                            ) : (
-                                pagos.map((item) => (
-                                    <tr key={item.pago_id} style={styles.tr}>
-                                        <td style={styles.td}>{item.pago_id}</td>
-                                        <td style={styles.td}>{item.factura_id}</td>
-                                        <td style={styles.td}>
-                                            ${parseFloat(item.monto).toFixed(2)}
-                                        </td>
-                                        <td style={styles.td}>{item.tipo_tarjeta}</td>
-                                        <td style={styles.td}>
-                                            {new Date(item.fecha_pago).toLocaleString()}
-                                        </td>
-                                        <td style={styles.td}>
-                                            <button
-                                                onClick={() => handleEdit(item)}
-                                                style={styles.btnEdit}
-                                            >
-                                                Editar
-                                            </button>
-                                            <button
-                                                onClick={() => handleDelete(item.pago_id)}
-                                                style={styles.btnDelete}
-                                            >
-                                                Eliminar
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                            </tbody>
-                        </table>
+        <div className="pantalla-principal-container">
+            {/* HEADER */}
+            <div className="pantalla-header">
+                <div className="pantalla-titulo">
+                    <span className="titulo-icono">
+                        <span className="material-symbols-outlined">payments</span>
+                    </span>
+                    <div>
+                        <h2>Gestión de Pagos</h2>
+                        <p>
+                            {pagos.length}{' '}
+                            {pagos.length === 1 ? 'pago registrado' : 'pagos registrados'}
+                        </p>
                     </div>
                 </div>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <button type="button" className="btn-cancelar" onClick={handleVerAntiguedad}>
+                        Antigüedad Saldos (SP)
+                    </button>
+                    <AddButton onClick={handleAbrirCrear}>Registrar Pago</AddButton>
+                </div>
             </div>
+
+            {errorApi && (
+                <div className="alerta-error" role="alert">
+                    <span className="material-symbols-outlined">error</span> {errorApi}
+                </div>
+            )}
+
+            {antiguedad && (
+                <div className="modal-contenido" style={{ marginBottom: '16px', padding: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <strong>Reporte de Antigüedad de Saldos (Facturas Pendientes)</strong>
+                        <button type="button" className="btn-cancelar" onClick={() => setAntiguedad(null)}>
+                            Cerrar
+                        </button>
+                    </div>
+                    {antiguedad.length === 0 ? (
+                        <p>No hay facturas pendientes de pago.</p>
+                    ) : (
+                        <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                            {antiguedad.map((f, idx) => (
+                                <li key={idx}>
+                                    Folio <strong>{f.folio}</strong> | Saldo pendiente:{' '}
+                                    <strong>${parseFloat(f.saldo_pendiente || f.total || 0).toFixed(2)}</strong> | Días vencidos:{' '}
+                                    <strong>{f.dias_antiguedad ?? 0}</strong> ({f.rango_antiguedad || 'Al corriente'})
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {cargando && (
+                <div className="cargando-texto">
+                    <span className="spinner" /> Sincronizando pagos con AWS...
+                </div>
+            )}
+
+            {/* TABLA DE PAGOS */}
+            {!cargando && (
+                <div className="tabla-contenedor">
+                    <table className="tabla-servicios">
+                        <thead>
+                        <tr>
+                            <th>ID Pago</th>
+                            <th>ID Factura</th>
+                            <th>Monto</th>
+                            <th>Tipo de Tarjeta</th>
+                            <th>Fecha de Pago</th>
+                            <th className="col-acciones">Acciones</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {pagos.length === 0 ? (
+                            <tr>
+                                <td colSpan="6">
+                                    <div className="tabla-vacia">
+                                        <span className="material-symbols-outlined">inbox</span>
+                                        <span>No hay pagos registrados</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        ) : (
+                            pagos.map((item) => (
+                                <tr key={item.pago_id} className="fila-servicio">
+                                    <td>
+                                        <span className="texto-id">{item.pago_id}</span>
+                                    </td>
+                                    <td>
+                                        <span className="texto-id">{item.factura_id}</span>
+                                    </td>
+                                    <td>
+                                        <strong>${parseFloat(item.monto || 0).toFixed(2)}</strong>
+                                    </td>
+                                    <td>
+                                        <span className="chip-categoria">{item.tipo_tarjeta}</span>
+                                    </td>
+                                    <td>
+                                        {item.fecha_pago
+                                            ? new Date(item.fecha_pago).toLocaleString()
+                                            : 'Recién registrado'}
+                                    </td>
+                                    <td>
+                                        <div className="acciones-tabla">
+                                            <EditButton onClick={() => handleEdit(item)} />
+                                            <DeleteButton onClick={() => handleDelete(item.pago_id)} />
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))
+                        )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+
+            {/* MODAL REGISTRAR / EDITAR PAGO */}
+            {modalOpen && (
+                <div className="modal-overlay" onClick={resetForm}>
+                    <div className="modal-contenido" onClick={(e) => e.stopPropagation()}>
+                        <h3>
+                            <span className="material-symbols-outlined">
+                                {editando ? 'edit_square' : 'add_card'}
+                            </span>
+                            {editando ? 'Editar Pago' : 'Registrar Nuevo Pago'}
+                        </h3>
+
+                        <form onSubmit={handleSubmit} className="modal-form">
+                            <div style={{ display: 'flex', gap: '12px' }}>
+                                <Input
+                                    label="ID Factura (FK)"
+                                    type="number"
+                                    name="factura_id"
+                                    value={formData.factura_id}
+                                    onChange={handleChange}
+                                    placeholder="Ej. 1"
+                                    required
+                                />
+                                <Input
+                                    label="Monto ($)"
+                                    type="number"
+                                    step="0.01"
+                                    name="monto"
+                                    value={formData.monto}
+                                    onChange={handleChange}
+                                    placeholder="0.00"
+                                    required
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                                <label className="label">Tipo de Tarjeta</label>
+                                <select
+                                    name="tipo_tarjeta"
+                                    value={formData.tipo_tarjeta}
+                                    onChange={handleChange}
+                                    className="modal-input"
+                                    required
+                                >
+                                    <option value="">Seleccionar tipo...</option>
+                                    <option value="Crédito">Crédito</option>
+                                    <option value="Débito">Débito</option>
+                                    <option value="Prepago">Prepago</option>
+                                    <option value="Corporativa">Corporativa</option>
+                                </select>
+                            </div>
+
+                            <div className="modal-acciones">
+                                <button type="button" className="btn-cancelar" onClick={resetForm}>
+                                    Cancelar
+                                </button>
+                                <button type="submit" className="btn-primario">
+                                    {editando ? 'Guardar Cambios' : 'Registrar Pago'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
-
-
-// Estilos sencillos en línea
-const styles = {
-    container: {
-        padding: '2rem',
-        backgroundColor: '#f8fafc',
-        minHeight: '100vh',
-        fontFamily: 'sans-serif',
-    },
-    title: {
-        fontSize: '1.875rem',
-        fontWeight: 'bold',
-        color: '#0f172a',
-        marginBottom: '1.5rem',
-    },
-    subtitle: {
-        fontSize: '1.25rem',
-        fontWeight: '600',
-        color: '#334155',
-        marginBottom: '1rem',
-    },
-    content: {
-        display: 'flex',
-        gap: '1.5rem',
-        flexWrap: 'wrap',
-    },
-    card: {
-        backgroundColor: '#ffffff',
-        padding: '1.5rem',
-        borderRadius: '8px',
-        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
-        flex: '1 1 350px',
-    },
-    form: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '1rem',
-    },
-    inputGroup: {
-        display: 'flex',
-        flexDirection: 'column',
-    },
-    label: {
-        fontSize: '0.875rem',
-        fontWeight: '500',
-        color: '#475569',
-        marginBottom: '0.25rem',
-    },
-    input: {
-        padding: '0.5rem 0.75rem',
-        borderRadius: '6px',
-        border: '1px solid #cbd5e1',
-        fontSize: '0.875rem',
-        outline: 'none',
-    },
-    buttonGroup: {
-        display: 'flex',
-        gap: '0.5rem',
-        marginTop: '0.5rem',
-    },
-    btnPrimary: {
-        flex: 1,
-        padding: '0.625rem',
-        backgroundColor: '#2563eb',
-        color: '#ffffff',
-        border: 'none',
-        borderRadius: '6px',
-        fontWeight: '600',
-        cursor: 'pointer',
-    },
-    btnSecondary: {
-        padding: '0.625rem 1rem',
-        backgroundColor: '#94a3b8',
-        color: '#ffffff',
-        border: 'none',
-        borderRadius: '6px',
-        cursor: 'pointer',
-    },
-    tableContainer: {
-        overflowX: 'auto',
-    },
-    table: {
-        width: '100%',
-        borderCollapse: 'collapse',
-        textAlign: 'left',
-        fontSize: '0.875rem',
-    },
-    tableHeader: {
-        backgroundColor: '#f1f5f9',
-    },
-    th: {
-        padding: '0.75rem',
-        color: '#475569',
-        fontWeight: '600',
-        borderBottom: '1px solid #e2e8f0',
-    },
-    tr: {
-        borderBottom: '1px solid #f1f5f9',
-    },
-    td: {
-        padding: '0.75rem',
-        color: '#334155',
-    },
-    btnEdit: {
-        padding: '0.25rem 0.5rem',
-        backgroundColor: '#eab308',
-        color: '#ffffff',
-        border: 'none',
-        borderRadius: '4px',
-        cursor: 'pointer',
-        marginRight: '0.5rem',
-    },
-    btnDelete: {
-        padding: '0.25rem 0.5rem',
-        backgroundColor: '#ef4444',
-        color: '#ffffff',
-        border: 'none',
-        borderRadius: '4px',
-        cursor: 'pointer',
-    },
-    emptyText: {
-        textAlign: 'center',
-        padding: '1.5rem',
-        color: '#94a3b8',
-    },
-};

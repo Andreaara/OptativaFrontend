@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Input from '../Componentes/Input.jsx';
 import { AddButton, EditButton, DeleteButton } from '../Componentes/Button.jsx';
+import { apiFetch } from '../Utils/api.js';
 import '../Estilos/Estilos.css';
 
 export default function Usuarios() {
   const [usuarios, setUsuarios] = useState([]);
+  const [cargando, setCargando] = useState(false);
+  const [errorApi, setErrorApi] = useState(null);
 
   const [formData, setFormData] = useState({
     usuario_id: null,
@@ -18,6 +21,23 @@ export default function Usuarios() {
 
   const [editando, setEditando] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+
+  const cargarUsuarios = async () => {
+    setCargando(true);
+    setErrorApi(null);
+    try {
+      const data = await apiFetch('/usuarios');
+      setUsuarios(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setErrorApi(err.message);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  useEffect(() => {
+    cargarUsuarios();
+  }, []);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -47,35 +67,56 @@ export default function Usuarios() {
   };
 
   const handleEdit = (usuario) => {
-    setFormData(usuario);
+    setFormData({
+      ...usuario,
+      fecha_nacimiento: usuario.fecha_nacimiento ? usuario.fecha_nacimiento.split('T')[0] : '',
+    });
     setEditando(true);
     setModalOpen(true);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    setCargando(true);
+    setErrorApi(null);
 
-    if (editando) {
-      setUsuarios((prev) =>
-          prev.map((u) => (u.usuario_id === formData.usuario_id ? { ...formData } : u))
-      );
-    } else {
-      const nuevoUsuario = {
-        ...formData,
-        usuario_id: Date.now().toString(),
-      };
-      setUsuarios((prev) => [...prev, nuevoUsuario]);
+    try {
+      if (editando) {
+        // Actualización visual inmediata (si agregas PUT /usuarios en Lambda, también persiste)
+        setUsuarios((prev) =>
+            prev.map((u) => (u.usuario_id === formData.usuario_id ? { ...formData } : u))
+        );
+      } else {
+        await apiFetch('/usuarios', {
+          method: 'POST',
+          body: JSON.stringify(formData),
+        });
+        await cargarUsuarios();
+      }
+      resetForm();
+    } catch (err) {
+      setErrorApi(err.message);
+    } finally {
+      setCargando(false);
     }
-
-    resetForm();
   };
 
-  const handleDelete = (usuario_id) => {
-    if (window.confirm('¿Estás seguro de que deseas eliminar este usuario?')) {
-      setUsuarios((prev) => prev.filter((u) => u.usuario_id !== usuario_id));
+  const handleDelete = async (usuario_id) => {
+    if (!window.confirm('¿Estás seguro de que deseas eliminar este usuario?')) return;
+
+    setCargando(true);
+    setErrorApi(null);
+    try {
+      await apiFetch(`/usuarios?id=${usuario_id}`, {
+        method: 'DELETE',
+      });
+      await cargarUsuarios();
       if (formData.usuario_id === usuario_id) {
         resetForm();
       }
+    } catch (err) {
+      setErrorApi(err.message);
+      setCargando(false);
     }
   };
 
@@ -97,57 +138,71 @@ export default function Usuarios() {
           <AddButton onClick={handleAbrirCrear}>Nuevo Usuario</AddButton>
         </div>
 
+        {errorApi && (
+            <div className="alerta-error" role="alert">
+              <span className="material-symbols-outlined">error</span> {errorApi}
+            </div>
+        )}
+
+        {cargando && (
+            <div className="cargando-texto">
+              <span className="spinner" /> Cargando usuarios desde AWS...
+            </div>
+        )}
+
         {/* TABLA DE USUARIOS */}
-        <div className="tabla-contenedor">
-          <table className="tabla-servicios">
-            <thead>
-            <tr>
-              <th>ID</th>
-              <th>Nombre</th>
-              <th>Apellidos</th>
-              <th>Género</th>
-              <th>Teléfono</th>
-              <th>F. Nacimiento</th>
-              <th className="col-acciones">Acciones</th>
-            </tr>
-            </thead>
-            <tbody>
-            {usuarios.length === 0 ? (
+        {!cargando && (
+            <div className="tabla-contenedor">
+              <table className="tabla-servicios">
+                <thead>
                 <tr>
-                  <td colSpan="7">
-                    <div className="tabla-vacia">
-                      <span className="material-symbols-outlined">inbox</span>
-                      <span>No hay usuarios registrados</span>
-                    </div>
-                  </td>
+                  <th>ID</th>
+                  <th>Nombre</th>
+                  <th>Apellidos</th>
+                  <th>Género</th>
+                  <th>Teléfono</th>
+                  <th>F. Nacimiento</th>
+                  <th className="col-acciones">Acciones</th>
                 </tr>
-            ) : (
-                usuarios.map((u) => (
-                    <tr key={u.usuario_id} className="fila-servicio">
-                      <td>
-                        <span className="texto-id">{u.usuario_id}</span>
-                      </td>
-                      <td className="texto-nombre">{u.nombre}</td>
-                      <td>
-                        {u.apellido_paterno} {u.apellido_materno}
-                      </td>
-                      <td>
-                        <span className="chip-categoria">{u.genero}</span>
-                      </td>
-                      <td>{u.telefono}</td>
-                      <td>{u.fecha_nacimiento}</td>
-                      <td>
-                        <div className="acciones-tabla">
-                          <EditButton onClick={() => handleEdit(u)} />
-                          <DeleteButton onClick={() => handleDelete(u.usuario_id)} />
+                </thead>
+                <tbody>
+                {usuarios.length === 0 ? (
+                    <tr>
+                      <td colSpan="7">
+                        <div className="tabla-vacia">
+                          <span className="material-symbols-outlined">inbox</span>
+                          <span>No hay usuarios registrados</span>
                         </div>
                       </td>
                     </tr>
-                ))
-            )}
-            </tbody>
-          </table>
-        </div>
+                ) : (
+                    usuarios.map((u) => (
+                        <tr key={u.usuario_id} className="fila-servicio">
+                          <td>
+                            <span className="texto-id">{u.usuario_id}</span>
+                          </td>
+                          <td className="texto-nombre">{u.nombre}</td>
+                          <td>
+                            {u.apellido_paterno} {u.apellido_materno}
+                          </td>
+                          <td>
+                            <span className="chip-categoria">{u.genero}</span>
+                          </td>
+                          <td>{u.telefono}</td>
+                          <td>{u.fecha_nacimiento ? u.fecha_nacimiento.split('T')[0] : ''}</td>
+                          <td>
+                            <div className="acciones-tabla">
+                              <EditButton onClick={() => handleEdit(u)} />
+                              <DeleteButton onClick={() => handleDelete(u.usuario_id)} />
+                            </div>
+                          </td>
+                        </tr>
+                    ))
+                )}
+                </tbody>
+              </table>
+            </div>
+        )}
 
         {/* MODAL PARA CREAR / EDITAR USUARIO */}
         {modalOpen && (

@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import Input from "../Componentes/Input.jsx";
+import { apiFetch } from "../Utils/api.js";
 import '../Estilos/Estilos.css';
 
 export default function Login() {
+    const navigate = useNavigate();
     const [formData, setFormData] = useState({
         email: '',
         password: '',
@@ -55,7 +58,6 @@ export default function Login() {
         e.preventDefault();
         setErrorLogin('');
 
-        // Validar todo antes de enviar
         const emailValido = validarCampo('email', formData.email);
         const passValido = validarCampo('password', formData.password);
 
@@ -64,26 +66,33 @@ export default function Login() {
         setCargando(true);
 
         try {
-            // Simulación de petición de autenticación
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            console.log('Datos de inicio de sesión:', formData);
-            alert('¡Inicio de sesión exitoso!');
+            const data = await apiFetch('/login', {
+                method: 'POST',
+                body: JSON.stringify({
+                    correo: formData.email,
+                    contrasena: formData.password,
+                }),
+            });
+
+            // Guardamos el JWT real y los datos del usuario
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('usuario', JSON.stringify(data.usuario));
+            navigate('/Pantallas/Facturas');
         } catch (err) {
-            setErrorLogin('Credenciales incorrectas. Revisa tu correo y contraseña.');
+            setErrorLogin(err.message || 'Credenciales incorrectas. Revisa tu correo y contraseña.');
         } finally {
             setCargando(false);
         }
     };
-
 
     return (
         <div className="pantalla-principal-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
             <div className="modal-contenido" style={{ maxWidth: '420px', width: '100%', padding: '32px' }}>
 
                 <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <span className="material-symbols-outlined" style={{ fontSize: '48px', color: '#2563eb' }}>
-            lock
-          </span>
+                    <span className="material-symbols-outlined" style={{ fontSize: '48px', color: '#2563eb' }}>
+                        lock
+                    </span>
                     <h2 style={{ fontSize: '24px', fontWeight: 'bold', margin: '8px 0 4px' }}>
                         Iniciar Sesión
                     </h2>
@@ -142,9 +151,9 @@ export default function Login() {
                                 alignItems: 'center'
                             }}
                         >
-              <span className="material-symbols-outlined">
-                {mostrarPassword ? 'visibility_off' : 'visibility'}
-              </span>
+                            <span className="material-symbols-outlined">
+                                {mostrarPassword ? 'visibility_off' : 'visibility'}
+                            </span>
                         </button>
                     </div>
 

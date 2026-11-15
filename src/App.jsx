@@ -11,15 +11,15 @@ import Categorias from "./Pantallas/Categorias.jsx";
 import FacturaEncabezado from "./Pantallas/FacturaEncabezado.jsx";
 import FacturaDetalles from "./Pantallas/FacturaDetalles.jsx";
 import Receptor from "./Pantallas/Receptor.jsx";
+import Impuestos from "./Pantallas/Impuestos.jsx";
 
-import ProtectedRoutes, { estaAutenticado } from "./Routes/ProtectedRoutes.jsx";
+import ProtectedRoutes, { estaAutenticado } from "./Routes/Protectedroutes.jsx";
 import Layout from "./Componentes/Layout.jsx";
 
 function App() {
   return (
       <BrowserRouter>
         <Routes>
-          {/* Pública: si ya hay sesión, salta directo a Facturas */}
           <Route
               path="/"
               element={
@@ -29,22 +29,26 @@ function App() {
               }
           />
 
-          {/* Protegidas: ProtectedRoute valida sesión, Layout pone el sidebar */}
           <Route element={<ProtectedRoutes />}>
             <Route element={<Layout />}>
+              <Route path="/Pantallas/PantallaPrincipal" element={<PantallaPrincipal />} />
               <Route path="/Pantallas/Facturas" element={<FacturaEncabezado />} />
               <Route path="/Pantallas/Detalles" element={<FacturaDetalles />} />
-              <Route path="/Pantallas/PantallaPrincipal" element={<PantallaPrincipal />} />
-              <Route path="/Pantallas/Usuarios" element={<Usuarios />} />
               <Route path="/Pantallas/Receptor" element={<Receptor />} />
               <Route path="/Pantallas/Emisor" element={<Emisor />} />
               <Route path="/Pantallas/Pagos" element={<Pagos />} />
-              <Route path="/Pantallas/Credenciales" element={<Credenciales />} />
               <Route path="/Pantallas/Categorias" element={<Categorias />} />
             </Route>
           </Route>
 
-          {/* Cualquier otra ruta */}
+          <Route element={<ProtectedRoutes allowedRoles={['ADMIN']} />}>
+            <Route element={<Layout />}>
+              <Route path="/Pantallas/Usuarios" element={<Usuarios />} />
+              <Route path="/Pantallas/Credenciales" element={<Credenciales />} />
+              <Route path="/Pantallas/Impuestos" element={<Impuestos />} />
+            </Route>
+          </Route>
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

@@ -1,133 +1,265 @@
 import React, { useState, useEffect } from 'react';
-import Swal from 'sweetalert2';
+import Input from '../Componentes/Input.jsx';
+import PageHeader from '../Componentes/PageHeader.jsx';
+import DataTable from '../Componentes/DataTable.jsx';
+import { AddButton } from '../Componentes/Button.jsx';
+import { apiFetch } from '../Utils/api.js';
+import { obtenerRolActual } from '../Routes/Protectedroutes.jsx';
+import { validarTexto } from '../Utils/validaciones.js';
+import {
+  swalBase,
+  alertaExito,
+  alertaError,
+  alertaCamposVacios,
+  alertaSinCambios,
+} from '../Utils/Alerts.js';
+import '../Estilos/Estilos.css';
 
 export default function Impuestos() {
   const [impuestos, setImpuestos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const rol = localStorage.getItem('rol') || 'FACTURADOR';
+  const [cargando, setCargando] = useState(false);
+  const rol = obtenerRolActual();
+
+  const [modalCrearOpen, setModalCrearOpen] = useState(false);
+  const [formData, setFormData] = useState({
+    nombre_impuesto: '',
+    tasa_porcentaje: '',
+    fecha_inicio_vigencia: new Date().toISOString().split('T')[0],
+  });
+
+  const cargarImpuestos = async () => {
+    setCargando(true);
+    try {
+      const data = await apiFetch('/impuestos');
+      setImpuestos(Array.isArray(data) ? data : []);
+    } catch (err) {
+      alertaError(err.message);
+    } finally {
+      setCargando(false);
+    }
+  };
 
   useEffect(() => {
     cargarImpuestos();
   }, []);
 
-  const cargarImpuestos = async () => {
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('token');
-      // Reemplaza con la URL del API Gateway FALTA CAMBIAR
-      const response = await fetch('https://zdqh4zqlfl.execute-api.us-east-1.amazonaws.com', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setImpuestos(data);
-      } else {
-        throw new Error('Error al obtener impuestos');
-      }
-    } catch (error) {
-      // Datos del script
-      setImpuestos([
-        { impuesto_id: 1, nombre_impuesto: 'IVA General 16%', tasa_porcentaje: 16.00, fecha_inicio_vigencia: '2024-01-01', activo: 1 },
-        { impuesto_id: 2, nombre_impuesto: 'IVA Frontera 8%', tasa_porcentaje: 8.00, fecha_inicio_vigencia: '2024-01-01', activo: 1 },
-        { impuesto_id: 3, nombre_impuesto: 'Retención ISR 10%', tasa_porcentaje: 10.00, fecha_inicio_vigencia: '2024-01-01', activo: 1 }
-      ]);
-    } finally {
-      setLoading(false);
-    }
+  const resetForm = () => {
+    setFormData({
+      nombre_impuesto: '',
+      tasa_porcentaje: '',
+      fecha_inicio_vigencia: new Date().toISOString().split('T')[0],
+    });
+    setModalCrearOpen(false);
   };
 
-  const handleActualizarTasa = async (impuestoId) => {
+  const handleCrearImpuesto = async (e) => {
+    e.preventDefault();
     if (rol !== 'ADMIN') {
-      Swal.fire({
-        icon: 'error',
-        title: 'Acceso Denegado',
-        text: 'Solo el rol ADMINISTRADOR puede modificar tasas fiscales en la RDS.'
-      });
+      alertaError('Solo el rol ADMIN puede registrar impuestos.');
       return;
     }
 
-    const { value: nuevaTasa } = await Swal.fire({
-      title: 'Actualizar Tasa de Impuesto',
-      input: 'number',
-      inputLabel: 'Ingrese la nueva tasa porcentual (Ej. 16.00)',
-      inputAttributes: { step: '0.01', min: '0', max: '100' },
-      showCancelButton: true,
-      confirmButtonText: 'Actualizar con Stored Procedure',
-      cancelButtonText: 'Cancelar',
-      inputValidator: (value) => {
-        if (!value || isNaN(value) || value < 0) {
-          return 'Debe ingresar un valor numérico válido';
-        }
-      }
+    const nombreValido = validarTexto(formData.nombre_impuesto, 'Nombre del Impuesto', {
+      min: 3,
+      max: 50,
     });
+    if (!nombreValido) return;
 
-    if (nuevaTasa) {
-      Swal.fire({
-        icon: 'success',
-        title: 'Tasa Actualizada',
-        text: `Se ejecutó sp_actualizar_tasa_impuesto para el ID ${impuestoId} con la nueva tasa de ${nuevaTasa}%.`
+    const tasaNum = parseFloat(formData.tasa_porcentaje);
+    if (formData.tasa_porcentaje === '' || isNaN(tasaNum) || tasaNum < 0 || tasaNum > 100) {
+      alertaError('La tasa porcentual debe ser un número entre 0 y 100.');
+      return;
+    }
+
+    if (!formData.fecha_inicio_vigencia) {
+      alertaCamposVacios();
+      return;
+    }
+
+    setCargando(true);
+    try {
+      await apiFetch('/impuestos', {
+        method: 'POST',
+        body: JSON.stringify({
+          nombre_impuesto: nombreValido,
+          tasa_porcentaje: Number(tasaNum.toFixed(2)),
+          fecha_inicio_vigencia: formData.fecha_inicio_vigencia,
+        }),
       });
-      cargarImpuestos();
+      resetForm();
+      await alertaExito('Impuesto registrado en RDS.');
+      await cargarImpuestos();
+    } catch (err) {
+      alertaError(err.message);
+    } finally {
+      setCargando(false);
     }
   };
 
-  return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Catálogo de Impuestos y Tasas (RDS)</h1>
-          <p className="text-sm text-gray-600">Administración de la tabla <code className="bg-gray-100 px-1 py-0.5 rounded text-indigo-600">Impuestos_Historico</code>.</p>
-        </div>
-        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${rol === 'ADMIN' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
-          Rol Actual: {rol}
-        </span>
-      </div>
+  const handleActualizarTasa = async (imp) => {
+    if (rol !== 'ADMIN') {
+      alertaError('Solo el rol ADMIN puede actualizar tasas fiscales.');
+      return;
+    }
 
-      {loading ? (
-        <div className="text-center py-10 text-gray-500">Cargando registros fiscales...</div>
-      ) : (
-        <div className="bg-white shadow-md rounded-lg overflow-hidden border border-gray-200">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre del Impuesto</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tasa (%)</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vigencia Desde</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estatus</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {impuestos.map((imp) => (
-                <tr key={imp.impuesto_id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{imp.impuesto_id}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{imp.nombre_impuesto}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-indigo-600">{Number(imp.tasa_porcentaje).toFixed(2)}%</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{imp.fecha_inicio_vigencia}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${imp.activo ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                      {imp.activo ? 'Vigente' : 'Inactivo'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    {rol === 'ADMIN' ? (
-                      <button
-                        onClick={() => handleActualizarTasa(imp.impuesto_id)}
-                        className="text-indigo-600 hover:text-indigo-900 bg-indigo-50 px-3 py-1 rounded-md text-xs font-semibold"
-                      >
-                        Actualizar Tasa
-                      </button>
-                    ) : (
-                      <span className="text-gray-400 text-xs italic">Solo lectura</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+    const { value: valorIngresado, isConfirmed } = await swalBase.fire({
+      title: 'Actualizar Tasa de Impuesto',
+      text: `Nueva tasa porcentual para "${imp.nombre_impuesto}" (actual: ${Number(imp.tasa_porcentaje).toFixed(2)}%)`,
+      input: 'number',
+      inputValue: imp.tasa_porcentaje,
+      inputAttributes: { step: '0.01', min: '0', max: '100' },
+      showCancelButton: true,
+      confirmButtonText: 'Actualizar con SP',
+      cancelButtonText: 'Cancelar',
+      inputValidator: (value) => {
+        const num = parseFloat(value);
+        if (value === '' || isNaN(num) || num < 0 || num > 100) {
+          return 'Debes ingresar un porcentaje válido entre 0 y 100';
+        }
+        return null;
+      },
+    });
+
+    if (!isConfirmed) return;
+
+    const nuevaTasa = Number(parseFloat(valorIngresado).toFixed(2));
+    if (nuevaTasa === Number(imp.tasa_porcentaje)) {
+      alertaSinCambios();
+      return;
+    }
+
+    setCargando(true);
+    try {
+      await apiFetch('/impuestos', {
+        method: 'PUT',
+        body: JSON.stringify({
+          impuesto_id: imp.impuesto_id,
+          nueva_tasa: nuevaTasa,
+        }),
+      });
+      await alertaExito(`Tasa actualizada a ${nuevaTasa.toFixed(2)}% mediante sp_actualizar_tasa_impuesto.`);
+      await cargarImpuestos();
+    } catch (err) {
+      alertaError(err.message);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  const columnas = [
+    { label: 'ID' },
+    { label: 'Nombre del Impuesto' },
+    { label: 'Tasa (%)' },
+    { label: 'Inicio Vigencia' },
+    { label: 'Fin Vigencia' },
+    { label: 'Estado' },
+    ...(rol === 'ADMIN' ? [{ label: 'Acciones', className: 'col-acciones' }] : []),
+  ];
+
+  return (
+      <div className="pantalla-principal-container">
+        <PageHeader
+            icon="percent"
+            title="Impuestos Histórico (RDS)"
+            subtitle={`${impuestos.length} ${impuestos.length === 1 ? 'tasa registrada' : 'tasas registradas'}`}
+        >
+          {rol === 'ADMIN' && (
+              <AddButton onClick={() => setModalCrearOpen(true)}>Nuevo Impuesto</AddButton>
+          )}
+        </PageHeader>
+
+        {cargando ? (
+            <div className="cargando-texto">
+              <span className="spinner" /> Cargando histórico de impuestos...
+            </div>
+        ) : (
+            <DataTable
+                columns={columnas}
+                data={impuestos}
+                emptyMessage="No hay impuestos registrados"
+                renderRow={(imp) => (
+                    <tr key={imp.impuesto_id} className="fila-servicio">
+                      <td><span className="texto-id">{imp.impuesto_id}</span></td>
+                      <td className="texto-nombre">{imp.nombre_impuesto}</td>
+                      <td><strong>{Number(imp.tasa_porcentaje || 0).toFixed(2)}%</strong></td>
+                      <td>{imp.fecha_inicio_vigencia ? imp.fecha_inicio_vigencia.split('T')[0] : '-'}</td>
+                      <td>{imp.fecha_fin_vigencia ? imp.fecha_fin_vigencia.split('T')[0] : 'Vigente'}</td>
+                      <td>
+                                <span className="chip-categoria">
+                                    {imp.activo ? 'Vigente' : 'Histórico'}
+                                </span>
+                      </td>
+                      {rol === 'ADMIN' && (
+                          <td>
+                            <div className="acciones-tabla">
+                              <button
+                                  type="button"
+                                  className="btn-primario"
+                                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                                  onClick={() => handleActualizarTasa(imp)}
+                              >
+                                Actualizar Tasa (SP)
+                              </button>
+                            </div>
+                          </td>
+                      )}
+                    </tr>
+                )}
+            />
+        )}
+
+        {modalCrearOpen && (
+            <div className="modal-overlay" onClick={resetForm}>
+              <div className="modal-contenido" onClick={(e) => e.stopPropagation()}>
+                <h3>
+                  <span className="material-symbols-outlined">add_circle</span>
+                  Nuevo Impuesto
+                </h3>
+                <form onSubmit={handleCrearImpuesto} className="modal-form">
+                  <Input
+                      label="Nombre del Impuesto"
+                      type="text"
+                      name="nombre_impuesto"
+                      value={formData.nombre_impuesto}
+                      onChange={(e) => setFormData({ ...formData, nombre_impuesto: e.target.value })}
+                      placeholder="Ej. IVA General 16%"
+                      maxLength={50}
+                      required
+                  />
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <Input
+                        label="Tasa (%)"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                        name="tasa_porcentaje"
+                        value={formData.tasa_porcentaje}
+                        onChange={(e) => setFormData({ ...formData, tasa_porcentaje: e.target.value })}
+                        placeholder="16.00"
+                        required
+                    />
+                    <Input
+                        label="Inicio de Vigencia"
+                        type="date"
+                        name="fecha_inicio_vigencia"
+                        value={formData.fecha_inicio_vigencia}
+                        onChange={(e) => setFormData({ ...formData, fecha_inicio_vigencia: e.target.value })}
+                        required
+                    />
+                  </div>
+                  <div className="modal-acciones">
+                    <button type="button" className="btn-cancelar" onClick={resetForm}>
+                      Cancelar
+                    </button>
+                    <button type="submit" className="btn-primario">
+                      Guardar Impuesto
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+        )}
+      </div>
   );
 }

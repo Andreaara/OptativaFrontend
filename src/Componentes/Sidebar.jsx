@@ -2,23 +2,28 @@ import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import "./Sidebar.css";
 import { alertaCerrarSesion } from "../Utils/Alerts.js";
-
+import { obtenerRolActual } from "../Routes/Protectedroutes.jsx";
 
 const navItems = [
-    { label: "Facturas", icon: "receipt_long", path: "/Pantallas/Facturas" },
-    { label: "Detalles", icon: "list_alt", path: "/Pantallas/Detalles" },
-    { label: "Servicios", icon: "design_services", path: "/Pantallas/PantallaPrincipal" },
-    { label: "Usuarios", icon: "group", path: "/Pantallas/Usuarios" },
-    { label: "Receptor", icon: "design_services", path: "/Pantallas/Receptor" },
-    { label: "Emisor", icon: "design_services", path: "/Pantallas/Emisor" },
-    { label: "Pagos", icon: "category", path: "/Pantallas/Pagos" },
-    { label: "Credenciales", icon: "key", path: "/Pantallas/Credenciales" },
-    { label: "Categorías", icon: "category", path: "/Pantallas/Categorias" },
+    { label: "Facturas", icon: "receipt_long", path: "/Pantallas/Facturas", roles: ["ADMIN", "FACTURADOR", "AUDITOR"] },
+    { label: "Detalles", icon: "list_alt", path: "/Pantallas/Detalles", roles: ["ADMIN", "FACTURADOR", "AUDITOR"] },
+    { label: "Pagos", icon: "payments", path: "/Pantallas/Pagos", roles: ["ADMIN", "FACTURADOR", "AUDITOR"] },
+    { label: "Servicios", icon: "design_services", path: "/Pantallas/PantallaPrincipal", roles: ["ADMIN", "FACTURADOR", "AUDITOR"] },
+    { label: "Categorías", icon: "category", path: "/Pantallas/Categorias", roles: ["ADMIN", "FACTURADOR", "AUDITOR"] },
+    { label: "Receptor", icon: "person_pin_circle", path: "/Pantallas/Receptor", roles: ["ADMIN", "FACTURADOR", "AUDITOR"] },
+    { label: "Emisor", icon: "domain", path: "/Pantallas/Emisor", roles: ["ADMIN", "AUDITOR"] },
+    { label: "Impuestos", icon: "percent", path: "/Pantallas/Impuestos", roles: ["ADMIN", "AUDITOR"] },
+    { label: "Usuarios", icon: "group", path: "/Pantallas/Usuarios", roles: ["ADMIN"] },
+    { label: "Credenciales", icon: "key", path: "/Pantallas/Credenciales", roles: ["ADMIN"] },
+    { label: "Auditoría", icon: "policy", path: "/Pantallas/Auditoria", roles: ["ADMIN", "AUDITOR"] },
 ];
 
 export default function Sidebar() {
     const [colapsado, setColapsado] = useState(false);
     const navigate = useNavigate();
+    const rolActual = obtenerRolActual();
+
+    const itemsVisibles = navItems.filter((item) => item.roles.includes(rolActual));
 
     const handleLogout = async () => {
         const resultado = await alertaCerrarSesion();
@@ -34,7 +39,16 @@ export default function Sidebar() {
             <div className="sidebar-header">
                 <div className="sidebar-brand">
                     <span className="material-symbols-outlined logo-icono">dashboard</span>
-                    {!colapsado && <span className="brand-nombre">MI APP</span>}
+                    {!colapsado && (
+                        <div style={{ display: "flex", flexDirection: "column" }}>
+                            <span className="brand-nombre">MI APP</span>
+                            {rolActual && (
+                                <span style={{ fontSize: "11px", opacity: 0.85, fontWeight: 600 }}>
+                                    Rol: {rolActual}
+                                </span>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <button
@@ -50,7 +64,7 @@ export default function Sidebar() {
             </div>
 
             <nav className="sidebar-nav">
-                {navItems.map(({ label, icon, path }) => (
+                {itemsVisibles.map(({ label, icon, path }) => (
                     <NavLink
                         key={path}
                         to={path}

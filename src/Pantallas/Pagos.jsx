@@ -1,14 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import Input from '../Componentes/Input.jsx';
+import PageHeader from '../Componentes/PageHeader.jsx';
+import DataTable from '../Componentes/DataTable.jsx';
 import { AddButton, EditButton, DeleteButton } from '../Componentes/Button.jsx';
 import { apiFetch } from '../Utils/api.js';
+import { obtenerRolActual } from '../Routes/Protectedroutes.jsx';
+import {
+    validarEnteroPositivo,
+    validarMontoPositivo,
+} from '../Utils/validaciones.js';
+import {
+    alertaExito,
+    alertaError,
+    alertaCamposVacios,
+    confirmarEliminar,
+    toast,
+} from '../Utils/Alerts.js';
 import '../Estilos/Estilos.css';
+
+const TIPOS_TARJETA_VALIDOS = ['Crédito', 'Débito', 'Prepago', 'Corporativa'];
 
 export default function Pagos() {
     const [pagos, setPagos] = useState([]);
     const [cargando, setCargando] = useState(false);
-    const [errorApi, setErrorApi] = useState(null);
     const [antiguedad, setAntiguedad] = useState(null);
+    const rol = obtenerRolActual();
 
     const [formData, setFormData] = useState({
         pago_id: null,
@@ -23,12 +39,11 @@ export default function Pagos() {
 
     const cargarPagos = async () => {
         setCargando(true);
-        setErrorApi(null);
         try {
             const data = await apiFetch('/pagos');
             setPagos(Array.isArray(data) ? data : []);
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
@@ -40,10 +55,7 @@ export default function Pagos() {
 
     const handleChange = (e) => {
         const { name, value } = e.target;
-        setFormData((prev) => ({
-            ...prev,
-            [name]: value,
-        }));
+        setFormData((prev) => ({ ...prev, [name]: value }));
     };
 
     const resetForm = () => {
@@ -71,86 +83,102 @@ export default function Pagos() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setCargando(true);
-        setErrorApi(null);
 
+        const facturaIdValido = validarEnteroPositivo(formData.factura_id, 'ID Factura');
+        if (!facturaIdValido) return;
+
+        const montoValido = validarMontoPositivo(formData.monto, 'Monto');
+        if (!montoValido) return;
+
+        if (!TIPOS_TARJETA_VALIDOS.includes(formData.tipo_tarjeta)) {
+            alertaCamposVacios();
+            return;
+        }
+
+        setCargando(true);
         try {
             if (editando) {
                 setPagos((prev) =>
                     prev.map((item) =>
-                        item.pago_id === formData.pago_id ? { ...formData } : item
+                        item.pago_id === formData.pago_id
+                            ? {
+                                ...item,
+                                factura_id: facturaIdValido,
+                                monto: montoValido,
+                                tipo_tarjeta: formData.tipo_tarjeta,
+                            }
+                            : item
                     )
                 );
+                resetForm();
+                toast.fire({ icon: 'success', title: 'Pago actualizado en vista' });
             } else {
                 await apiFetch('/pagos', {
                     method: 'POST',
                     body: JSON.stringify({
-                        factura_id: Number(formData.factura_id),
-                        monto: parseFloat(formData.monto),
+                        factura_id: facturaIdValido,
+                        monto: montoValido,
                         tipo_tarjeta: formData.tipo_tarjeta,
                     }),
                 });
+                resetForm();
+                await alertaExito('Pago registrado y estatus de factura validado con Stored Procedure.');
                 await cargarPagos();
             }
-            resetForm();
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
     };
 
-    const handleDelete = (pago_id) => {
-        if (window.confirm('¿Estás seguro de que deseas eliminar este registro de pago?')) {
-            setPagos((prev) => prev.filter((item) => item.pago_id !== pago_id));
-            if (formData.pago_id === pago_id) {
-                resetForm();
-            }
+    const handleDelete = async (pago_id) => {
+        const confirmado = await confirmarEliminar();
+        if (!confirmado) return;
+
+        setPagos((prev) => prev.filter((item) => item.pago_id !== pago_id));
+        if (formData.pago_id === pago_id) {
+            resetForm();
         }
+        toast.fire({ icon: 'success', title: 'Registro de pago eliminado' });
     };
 
     const handleVerAntiguedad = async () => {
         setCargando(true);
-        setErrorApi(null);
         try {
             const data = await apiFetch('/reportes?tipo=antiguedad');
             setAntiguedad(Array.isArray(data) ? data : []);
+            toast.fire({ icon: 'success', title: 'Reporte de antigüedad generado' });
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
     };
 
+    const columnas = [
+        { label: 'ID Pago' },
+        { label: 'ID Factura' },
+        { label: 'Monto' },
+        { label: 'Tipo de Tarjeta' },
+        { label: 'Fecha de Pago' },
+        ...(rol !== 'AUDITOR' ? [{ label: 'Acciones', className: 'col-acciones' }] : []),
+    ];
+
     return (
         <div className="pantalla-principal-container">
-            {/* HEADER */}
-            <div className="pantalla-header">
-                <div className="pantalla-titulo">
-                    <span className="titulo-icono">
-                        <span className="material-symbols-outlined">payments</span>
-                    </span>
-                    <div>
-                        <h2>Gestión de Pagos</h2>
-                        <p>
-                            {pagos.length}{' '}
-                            {pagos.length === 1 ? 'pago registrado' : 'pagos registrados'}
-                        </p>
-                    </div>
-                </div>
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                    <button type="button" className="btn-cancelar" onClick={handleVerAntiguedad}>
-                        Antigüedad Saldos (SP)
-                    </button>
+            <PageHeader
+                icon="payments"
+                title="Gestión de Pagos"
+                subtitle={`${pagos.length} ${pagos.length === 1 ? 'pago registrado' : 'pagos registrados'}`}
+            >
+                <button type="button" className="btn-cancelar" onClick={handleVerAntiguedad}>
+                    Antigüedad Saldos (SP)
+                </button>
+                {rol !== 'AUDITOR' && (
                     <AddButton onClick={handleAbrirCrear}>Registrar Pago</AddButton>
-                </div>
-            </div>
-
-            {errorApi && (
-                <div className="alerta-error" role="alert">
-                    <span className="material-symbols-outlined">error</span> {errorApi}
-                </div>
-            )}
+                )}
+            </PageHeader>
 
             {antiguedad && (
                 <div className="modal-contenido" style={{ marginBottom: '16px', padding: '16px' }}>
@@ -166,9 +194,9 @@ export default function Pagos() {
                         <ul style={{ margin: 0, paddingLeft: '20px' }}>
                             {antiguedad.map((f, idx) => (
                                 <li key={idx}>
-                                    Folio <strong>{f.folio}</strong> | Saldo pendiente:{' '}
-                                    <strong>${parseFloat(f.saldo_pendiente || f.total || 0).toFixed(2)}</strong> | Días vencidos:{' '}
-                                    <strong>{f.dias_antiguedad ?? 0}</strong> ({f.rango_antiguedad || 'Al corriente'})
+                                    Folio <strong>{f.folio}</strong> ({f.cliente}) | Total:{' '}
+                                    <strong>${parseFloat(f.total || 0).toFixed(2)}</strong> | Días vencidos:{' '}
+                                    <strong>{f.dias_antiguedad ?? 0}</strong> ({f.categoria_vencimiento || 'Vigente'})
                                 </li>
                             ))}
                         </ul>
@@ -176,71 +204,39 @@ export default function Pagos() {
                 </div>
             )}
 
-            {cargando && (
+            {cargando ? (
                 <div className="cargando-texto">
                     <span className="spinner" /> Sincronizando pagos con AWS...
                 </div>
-            )}
-
-            {/* TABLA DE PAGOS */}
-            {!cargando && (
-                <div className="tabla-contenedor">
-                    <table className="tabla-servicios">
-                        <thead>
-                        <tr>
-                            <th>ID Pago</th>
-                            <th>ID Factura</th>
-                            <th>Monto</th>
-                            <th>Tipo de Tarjeta</th>
-                            <th>Fecha de Pago</th>
-                            <th className="col-acciones">Acciones</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        {pagos.length === 0 ? (
-                            <tr>
-                                <td colSpan="6">
-                                    <div className="tabla-vacia">
-                                        <span className="material-symbols-outlined">inbox</span>
-                                        <span>No hay pagos registrados</span>
+            ) : (
+                <DataTable
+                    columns={columnas}
+                    data={pagos}
+                    emptyMessage="No hay pagos registrados"
+                    renderRow={(item) => (
+                        <tr key={item.pago_id} className="fila-servicio">
+                            <td><span className="texto-id">{item.pago_id}</span></td>
+                            <td><span className="texto-id">{item.factura_id}</span></td>
+                            <td><strong>${parseFloat(item.monto || 0).toFixed(2)}</strong></td>
+                            <td><span className="chip-categoria">{item.tipo_tarjeta}</span></td>
+                            <td>
+                                {item.fecha_pago
+                                    ? new Date(item.fecha_pago).toLocaleString()
+                                    : 'Recién registrado'}
+                            </td>
+                            {rol !== 'AUDITOR' && (
+                                <td>
+                                    <div className="acciones-tabla">
+                                        <EditButton onClick={() => handleEdit(item)} />
+                                        <DeleteButton onClick={() => handleDelete(item.pago_id)} />
                                     </div>
                                 </td>
-                            </tr>
-                        ) : (
-                            pagos.map((item) => (
-                                <tr key={item.pago_id} className="fila-servicio">
-                                    <td>
-                                        <span className="texto-id">{item.pago_id}</span>
-                                    </td>
-                                    <td>
-                                        <span className="texto-id">{item.factura_id}</span>
-                                    </td>
-                                    <td>
-                                        <strong>${parseFloat(item.monto || 0).toFixed(2)}</strong>
-                                    </td>
-                                    <td>
-                                        <span className="chip-categoria">{item.tipo_tarjeta}</span>
-                                    </td>
-                                    <td>
-                                        {item.fecha_pago
-                                            ? new Date(item.fecha_pago).toLocaleString()
-                                            : 'Recién registrado'}
-                                    </td>
-                                    <td>
-                                        <div className="acciones-tabla">
-                                            <EditButton onClick={() => handleEdit(item)} />
-                                            <DeleteButton onClick={() => handleDelete(item.pago_id)} />
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                        </tbody>
-                    </table>
-                </div>
+                            )}
+                        </tr>
+                    )}
+                />
             )}
 
-            {/* MODAL REGISTRAR / EDITAR PAGO */}
             {modalOpen && (
                 <div className="modal-overlay" onClick={resetForm}>
                     <div className="modal-contenido" onClick={(e) => e.stopPropagation()}>
@@ -256,6 +252,7 @@ export default function Pagos() {
                                 <Input
                                     label="ID Factura (FK)"
                                     type="number"
+                                    min="1"
                                     name="factura_id"
                                     value={formData.factura_id}
                                     onChange={handleChange}
@@ -266,6 +263,7 @@ export default function Pagos() {
                                     label="Monto ($)"
                                     type="number"
                                     step="0.01"
+                                    min="0.01"
                                     name="monto"
                                     value={formData.monto}
                                     onChange={handleChange}

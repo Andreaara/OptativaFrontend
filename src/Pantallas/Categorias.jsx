@@ -1,31 +1,42 @@
 import React, { useState, useEffect } from 'react';
 import Input from '../Componentes/Input.jsx';
+import PageHeader from '../Componentes/PageHeader.jsx';
+import DataTable from '../Componentes/DataTable.jsx';
 import { AddButton, EditButton, DeleteButton } from '../Componentes/Button.jsx';
 import { apiFetch } from '../Utils/api.js';
+import { obtenerRolActual } from '../Routes/Protectedroutes.jsx';
+import { validarTexto } from '../Utils/validaciones.js';
+import {
+    alertaExito,
+    alertaError,
+    alertaSinCambios,
+    confirmarEliminar,
+    toast,
+} from '../Utils/Alerts.js';
 import '../Estilos/Estilos.css';
 
 export default function Categorias() {
     const [categorias, setCategorias] = useState([]);
     const [cargando, setCargando] = useState(false);
-    const [errorApi, setErrorApi] = useState(null);
+    const rol = obtenerRolActual();
 
     const [formData, setFormData] = useState({
         categoria_id: null,
         nombre: '',
         descripcion: '',
     });
+    const [originalData, setOriginalData] = useState(null);
 
     const [editando, setEditando] = useState(false);
     const [modalOpen, setModalOpen] = useState(false);
 
     const cargarCategorias = async () => {
         setCargando(true);
-        setErrorApi(null);
         try {
             const data = await apiFetch('/categorias');
             setCategorias(Array.isArray(data) ? data : []);
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
@@ -42,6 +53,7 @@ export default function Categorias() {
 
     const resetForm = () => {
         setFormData({ categoria_id: null, nombre: '', descripcion: '' });
+        setOriginalData(null);
         setEditando(false);
         setModalOpen(false);
     };
@@ -52,141 +64,147 @@ export default function Categorias() {
     };
 
     const handleEdit = (item) => {
-        setFormData({
+        const datos = {
             categoria_id: item.categoria_id,
             nombre: item.nombre || '',
             descripcion: item.descripcion || '',
-        });
+        };
+        setFormData(datos);
+        setOriginalData(datos);
         setEditando(true);
         setModalOpen(true);
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setCargando(true);
-        setErrorApi(null);
+        if (rol !== 'ADMIN') {
+            alertaError('Solo el rol ADMIN puede administrar categorías.');
+            return;
+        }
 
+        const nombreValido = validarTexto(formData.nombre, 'Nombre de la Categoría', {
+            min: 3,
+            max: 100,
+        });
+        if (!nombreValido) return;
+
+        const descripcionValida = validarTexto(formData.descripcion, 'Descripción', {
+            min: 5,
+            max: 250,
+        });
+        if (!descripcionValida) return;
+
+        if (
+            editando &&
+            originalData &&
+            originalData.nombre === nombreValido &&
+            originalData.descripcion === descripcionValida
+        ) {
+            alertaSinCambios();
+            return;
+        }
+
+        setCargando(true);
         try {
             if (editando) {
                 await apiFetch('/categorias', {
                     method: 'PUT',
                     body: JSON.stringify({
                         categoria_id: formData.categoria_id,
-                        nombre: formData.nombre.trim(),
-                        descripcion: formData.descripcion.trim(),
+                        nombre: nombreValido,
+                        descripcion: descripcionValida,
                     }),
                 });
+                resetForm();
+                await alertaExito('Categoría actualizada correctamente.');
             } else {
                 await apiFetch('/categorias', {
                     method: 'POST',
                     body: JSON.stringify({
-                        nombre: formData.nombre.trim(),
-                        descripcion: formData.descripcion.trim(),
+                        nombre: nombreValido,
+                        descripcion: descripcionValida,
                     }),
                 });
+                resetForm();
+                await alertaExito('Categoría creada correctamente.');
             }
             await cargarCategorias();
-            resetForm();
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
     };
 
     const handleDelete = async (categoria_id) => {
-        if (!window.confirm('¿Deseas eliminar esta categoría?')) return;
+        if (rol !== 'ADMIN') {
+            alertaError('Solo el rol ADMIN puede eliminar categorías.');
+            return;
+        }
+
+        const confirmado = await confirmarEliminar();
+        if (!confirmado) return;
 
         setCargando(true);
-        setErrorApi(null);
         try {
             await apiFetch(`/categorias?id=${categoria_id}`, {
                 method: 'DELETE',
             });
-            await cargarCategorias();
+            toast.fire({ icon: 'success', title: 'Categoría eliminada' });
             if (formData.categoria_id === categoria_id) resetForm();
+            await cargarCategorias();
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
             setCargando(false);
         }
     };
 
+    const columnas = [
+        { label: 'ID' },
+        { label: 'Nombre' },
+        { label: 'Descripción' },
+        ...(rol === 'ADMIN' ? [{ label: 'Acciones', className: 'col-acciones' }] : []),
+    ];
+
     return (
         <div className="pantalla-principal-container">
-            {/* HEADER DE LA PANTALLA */}
-            <div className="pantalla-header">
-                <div className="pantalla-titulo">
-                    <span className="titulo-icono">
-                        <span className="material-symbols-outlined">category</span>
-                    </span>
-                    <div>
-                        <h2>Gestión de Categorías</h2>
-                        <p>
-                            {categorias.length}{' '}
-                            {categorias.length === 1 ? 'categoría registrada' : 'categorías registradas'}
-                        </p>
-                    </div>
-                </div>
-                <AddButton onClick={handleAbrirCrear}>Nueva Categoría</AddButton>
-            </div>
+            <PageHeader
+                icon="category"
+                title="Gestión de Categorías"
+                subtitle={`${categorias.length} ${categorias.length === 1 ? 'categoría registrada' : 'categorías registradas'}`}
+            >
+                {rol === 'ADMIN' && (
+                    <AddButton onClick={handleAbrirCrear}>Nueva Categoría</AddButton>
+                )}
+            </PageHeader>
 
-            {errorApi && (
-                <div className="alerta-error" role="alert">
-                    <span className="material-symbols-outlined">error</span> {errorApi}
-                </div>
-            )}
-
-            {cargando && (
+            {cargando ? (
                 <div className="cargando-texto">
                     <span className="spinner" /> Sincronizando categorías con AWS...
                 </div>
-            )}
-
-            {/* TABLA DE CATEGORÍAS */}
-            {!cargando && (
-                <div className="tabla-contenedor">
-                    <table className="tabla-servicios">
-                        <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Nombre</th>
-                            <th>Descripción</th>
-                            <th className="col-acciones">Acciones</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        {categorias.length === 0 ? (
-                            <tr>
-                                <td colSpan="4">
-                                    <div className="tabla-vacia">
-                                        <span className="material-symbols-outlined">inbox</span>
-                                        <span>No hay categorías registradas</span>
+            ) : (
+                <DataTable
+                    columns={columnas}
+                    data={categorias}
+                    emptyMessage="No hay categorías registradas"
+                    renderRow={(item) => (
+                        <tr key={item.categoria_id} className="fila-servicio">
+                            <td><span className="texto-id">{item.categoria_id}</span></td>
+                            <td className="texto-nombre">{item.nombre}</td>
+                            <td>{item.descripcion}</td>
+                            {rol === 'ADMIN' && (
+                                <td>
+                                    <div className="acciones-tabla">
+                                        <EditButton onClick={() => handleEdit(item)} />
+                                        <DeleteButton onClick={() => handleDelete(item.categoria_id)} />
                                     </div>
                                 </td>
-                            </tr>
-                        ) : (
-                            categorias.map((item) => (
-                                <tr key={item.categoria_id} className="fila-servicio">
-                                    <td>
-                                        <span className="texto-id">{item.categoria_id}</span>
-                                    </td>
-                                    <td className="texto-nombre">{item.nombre}</td>
-                                    <td>{item.descripcion}</td>
-                                    <td>
-                                        <div className="acciones-tabla">
-                                            <EditButton onClick={() => handleEdit(item)} />
-                                            <DeleteButton onClick={() => handleDelete(item.categoria_id)} />
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                        </tbody>
-                    </table>
-                </div>
+                            )}
+                        </tr>
+                    )}
+                />
             )}
 
-            {/* MODAL PARA CREAR / EDITAR CATEGORÍA */}
             {modalOpen && (
                 <div className="modal-overlay" onClick={resetForm}>
                     <div className="modal-contenido" onClick={(e) => e.stopPropagation()}>
@@ -204,6 +222,7 @@ export default function Categorias() {
                                 name="nombre"
                                 value={formData.nombre}
                                 onChange={handleChange}
+                                maxLength={100}
                                 required
                             />
 
@@ -215,6 +234,7 @@ export default function Categorias() {
                                     onChange={handleChange}
                                     className="modal-input"
                                     style={{ height: '80px', resize: 'vertical' }}
+                                    maxLength={250}
                                     required
                                 />
                             </div>

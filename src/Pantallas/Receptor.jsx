@@ -1,13 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import Input from '../Componentes/Input.jsx';
+import PageHeader from '../Componentes/PageHeader.jsx';
+import DataTable from '../Componentes/DataTable.jsx';
 import { AddButton, EditButton, DeleteButton } from '../Componentes/Button.jsx';
 import { apiFetch } from '../Utils/api.js';
+import { obtenerRolActual } from '../Routes/Protectedroutes.jsx';
+import { limpiarTexto, validarTexto } from '../Utils/validaciones.js';
+import {
+    alertaExito,
+    alertaError,
+    alertaCamposCaracteres,
+    alertaSinCambios,
+    confirmarEliminar,
+    toast,
+} from '../Utils/Alerts.js';
 import '../Estilos/Estilos.css';
+
+const REGEX_RFC = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/;
+const REGEX_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Receptor() {
     const [receptores, setReceptores] = useState([]);
     const [cargando, setCargando] = useState(false);
-    const [errorApi, setErrorApi] = useState(null);
+    const rol = obtenerRolActual();
 
     const [formData, setFormData] = useState({
         cliente_id: null,
@@ -18,18 +33,18 @@ export default function Receptor() {
         activo: true,
         fecha_creacion: '',
     });
+    const [originalData, setOriginalData] = useState(null);
 
     const [editando, setEditando] = useState(false);
     const [modalOpen, setModalOpen] = useState(false);
 
     const cargarReceptores = async () => {
         setCargando(true);
-        setErrorApi(null);
         try {
             const data = await apiFetch('/receptores');
             setReceptores(Array.isArray(data) ? data : []);
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
@@ -57,6 +72,7 @@ export default function Receptor() {
             activo: true,
             fecha_creacion: '',
         });
+        setOriginalData(null);
         setEditando(false);
         setModalOpen(false);
     };
@@ -67,143 +83,170 @@ export default function Receptor() {
     };
 
     const handleEdit = (receptor) => {
-        setFormData({
+        const datos = {
             ...receptor,
             activo: Boolean(receptor.activo),
             fecha_creacion: receptor.fecha_creacion ? receptor.fecha_creacion.split('T')[0] : '',
-        });
+        };
+        setFormData(datos);
+        setOriginalData(datos);
         setEditando(true);
         setModalOpen(true);
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setCargando(true);
-        setErrorApi(null);
 
+        const rfcLimpio = limpiarTexto(formData.rfc).toUpperCase();
+        if (!REGEX_RFC.test(rfcLimpio)) {
+            alertaCamposCaracteres('El RFC debe tener 12 o 13 caracteres válidos (ej. XAXX010101000).');
+            return;
+        }
+
+        const emailLimpio = limpiarTexto(formData.email).toLowerCase();
+        if (!REGEX_EMAIL.test(emailLimpio) || emailLimpio.length > 100) {
+            alertaCamposCaracteres('Ingresa un correo electrónico válido.');
+            return;
+        }
+
+        const razonValida = validarTexto(formData.razon_social, 'Razón Social', {
+            min: 3,
+            max: 150,
+        });
+        if (!razonValida) return;
+
+        const direccionValida = validarTexto(formData.direccion, 'Dirección', {
+            min: 5,
+            max: 250,
+        });
+        if (!direccionValida) return;
+
+        if (
+            editando &&
+            originalData &&
+            originalData.rfc === rfcLimpio &&
+            originalData.email === emailLimpio &&
+            originalData.razon_social === razonValida &&
+            originalData.direccion === direccionValida &&
+            originalData.activo === formData.activo
+        ) {
+            alertaSinCambios();
+            return;
+        }
+
+        setCargando(true);
         try {
             if (editando) {
                 setReceptores((prev) =>
                     prev.map((item) =>
-                        item.cliente_id === formData.cliente_id ? { ...formData } : item
+                        item.cliente_id === formData.cliente_id
+                            ? {
+                                ...item,
+                                rfc: rfcLimpio,
+                                email: emailLimpio,
+                                razon_social: razonValida,
+                                direccion: direccionValida,
+                                activo: formData.activo ? 1 : 0,
+                            }
+                            : item
                     )
                 );
+                resetForm();
+                toast.fire({ icon: 'success', title: 'Receptor actualizado' });
             } else {
                 await apiFetch('/receptores', {
                     method: 'POST',
                     body: JSON.stringify({
-                        rfc: formData.rfc.toUpperCase(),
-                        razon_social: formData.razon_social,
-                        email: formData.email,
-                        direccion: formData.direccion,
+                        rfc: rfcLimpio,
+                        razon_social: razonValida,
+                        email: emailLimpio,
+                        direccion: direccionValida,
                         activo: formData.activo ? 1 : 0,
                     }),
                 });
+                resetForm();
+                await alertaExito('Receptor registrado correctamente.');
                 await cargarReceptores();
             }
-            resetForm();
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
     };
 
-    const handleDelete = (cliente_id) => {
-        if (window.confirm('¿Estás seguro de que deseas eliminar este receptor?')) {
-            setReceptores((prev) => prev.filter((item) => item.cliente_id !== cliente_id));
-            if (formData.cliente_id === cliente_id) {
-                resetForm();
-            }
+    const handleDelete = async (cliente_id) => {
+        if (rol !== 'ADMIN') {
+            alertaError('Solo el rol ADMIN puede eliminar receptores.');
+            return;
         }
+
+        const confirmado = await confirmarEliminar();
+        if (!confirmado) return;
+
+        setReceptores((prev) => prev.filter((item) => item.cliente_id !== cliente_id));
+        if (formData.cliente_id === cliente_id) {
+            resetForm();
+        }
+        toast.fire({ icon: 'success', title: 'Receptor eliminado' });
     };
+
+    const columnas = [
+        { label: 'ID Cliente' },
+        { label: 'RFC' },
+        { label: 'Razón Social' },
+        { label: 'Email' },
+        { label: 'Dirección' },
+        { label: 'Estado' },
+        ...(rol === 'ADMIN' ? [{ label: 'Acciones', className: 'col-acciones' }] : []),
+    ];
 
     return (
         <div className="pantalla-principal-container">
-            {/* HEADER */}
-            <div className="pantalla-header">
-                <div className="pantalla-titulo">
-                    <span className="titulo-icono">
-                        <span className="material-symbols-outlined">person_pin_circle</span>
-                    </span>
-                    <div>
-                        <h2>Gestión de Receptores (Clientes)</h2>
-                        <p>
-                            {receptores.length}{' '}
-                            {receptores.length === 1 ? 'receptor registrado' : 'receptores registrados'}
-                        </p>
-                    </div>
-                </div>
-                <AddButton onClick={handleAbrirCrear}>Nuevo Receptor</AddButton>
-            </div>
+            <PageHeader
+                icon="person_pin_circle"
+                title="Gestión de Receptores (Clientes)"
+                subtitle={`${receptores.length} ${receptores.length === 1 ? 'receptor registrado' : 'receptores registrados'}`}
+            >
+                {rol !== 'AUDITOR' && (
+                    <AddButton onClick={handleAbrirCrear}>Nuevo Receptor</AddButton>
+                )}
+            </PageHeader>
 
-            {errorApi && (
-                <div className="alerta-error" role="alert">
-                    <span className="material-symbols-outlined">error</span> {errorApi}
-                </div>
-            )}
-
-            {cargando && (
+            {cargando ? (
                 <div className="cargando-texto">
                     <span className="spinner" /> Cargando receptores desde AWS...
                 </div>
-            )}
-
-            {/* TABLA */}
-            {!cargando && (
-                <div className="tabla-contenedor">
-                    <table className="tabla-servicios">
-                        <thead>
-                        <tr>
-                            <th>ID Cliente</th>
-                            <th>RFC</th>
-                            <th>Razón Social</th>
-                            <th>Email</th>
-                            <th>Dirección</th>
-                            <th>Estado</th>
-                            <th className="col-acciones">Acciones</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        {receptores.length === 0 ? (
-                            <tr>
-                                <td colSpan="7">
-                                    <div className="tabla-vacia">
-                                        <span className="material-symbols-outlined">inbox</span>
-                                        <span>No hay receptores registrados</span>
+            ) : (
+                <DataTable
+                    columns={columnas}
+                    data={receptores}
+                    emptyMessage="No hay receptores registrados"
+                    renderRow={(item) => (
+                        <tr key={item.cliente_id} className="fila-servicio">
+                            <td><span className="texto-id">{item.cliente_id}</span></td>
+                            <td className="texto-nombre">{item.rfc}</td>
+                            <td>{item.razon_social}</td>
+                            <td>{item.email}</td>
+                            <td>{item.direccion}</td>
+                            <td>
+                                <span className="chip-categoria">
+                                    {item.activo ? 'Activo' : 'Inactivo'}
+                                </span>
+                            </td>
+                            {rol === 'ADMIN' && (
+                                <td>
+                                    <div className="acciones-tabla">
+                                        <EditButton onClick={() => handleEdit(item)} />
+                                        <DeleteButton onClick={() => handleDelete(item.cliente_id)} />
                                     </div>
                                 </td>
-                            </tr>
-                        ) : (
-                            receptores.map((item) => (
-                                <tr key={item.cliente_id} className="fila-servicio">
-                                    <td>
-                                        <span className="texto-id">{item.cliente_id}</span>
-                                    </td>
-                                    <td className="texto-nombre">{item.rfc}</td>
-                                    <td>{item.razon_social}</td>
-                                    <td>{item.email}</td>
-                                    <td>{item.direccion}</td>
-                                    <td>
-                                            <span className="chip-categoria">
-                                                {item.activo ? 'Activo' : 'Inactivo'}
-                                            </span>
-                                    </td>
-                                    <td>
-                                        <div className="acciones-tabla">
-                                            <EditButton onClick={() => handleEdit(item)} />
-                                            <DeleteButton onClick={() => handleDelete(item.cliente_id)} />
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                        </tbody>
-                    </table>
-                </div>
+                            )}
+                        </tr>
+                    )}
+                />
             )}
 
-            {/* MODAL */}
             {modalOpen && (
                 <div className="modal-overlay" onClick={resetForm}>
                     <div className="modal-contenido" onClick={(e) => e.stopPropagation()}>
@@ -223,6 +266,7 @@ export default function Receptor() {
                                     value={formData.rfc}
                                     onChange={handleChange}
                                     placeholder="XAXX010101000"
+                                    maxLength={13}
                                     required
                                 />
                                 <Input
@@ -232,6 +276,7 @@ export default function Receptor() {
                                     value={formData.email}
                                     onChange={handleChange}
                                     placeholder="cliente@ejemplo.com"
+                                    maxLength={100}
                                     required
                                 />
                             </div>
@@ -243,6 +288,7 @@ export default function Receptor() {
                                 value={formData.razon_social}
                                 onChange={handleChange}
                                 placeholder="Nombre o empresa del cliente"
+                                maxLength={150}
                                 required
                             />
 
@@ -253,6 +299,7 @@ export default function Receptor() {
                                 value={formData.direccion}
                                 onChange={handleChange}
                                 placeholder="Calle, número, colonia, CP"
+                                maxLength={250}
                                 required
                             />
 

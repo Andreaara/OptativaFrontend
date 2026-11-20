@@ -1,13 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import Input from '../Componentes/Input.jsx';
+import PageHeader from '../Componentes/PageHeader.jsx';
+import DataTable from '../Componentes/DataTable.jsx';
 import { AddButton, EditButton, DeleteButton } from '../Componentes/Button.jsx';
 import { apiFetch } from '../Utils/api.js';
+import { obtenerRolActual } from '../Routes/Protectedroutes.jsx';
+import {
+    limpiarTexto,
+    validarTexto,
+    validarEnteroPositivo,
+} from '../Utils/validaciones.js';
+import {
+    alertaExito,
+    alertaError,
+    alertaCamposCaracteres,
+    alertaSinCambios,
+    confirmarEliminar,
+    toast,
+} from '../Utils/Alerts.js';
 import '../Estilos/Estilos.css';
+
+const REGEX_RFC = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/;
+const REGEX_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Emisor() {
     const [emisores, setEmisores] = useState([]);
     const [cargando, setCargando] = useState(false);
-    const [errorApi, setErrorApi] = useState(null);
+    const rol = obtenerRolActual();
 
     const [formData, setFormData] = useState({
         emisor_id: null,
@@ -19,18 +38,18 @@ export default function Emisor() {
         direccion: '',
         activo: true,
     });
+    const [originalData, setOriginalData] = useState(null);
 
     const [editando, setEditando] = useState(false);
     const [modalOpen, setModalOpen] = useState(false);
 
     const cargarEmisores = async () => {
         setCargando(true);
-        setErrorApi(null);
         try {
             const data = await apiFetch('/emisores');
             setEmisores(Array.isArray(data) ? data : []);
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
@@ -59,6 +78,7 @@ export default function Emisor() {
             direccion: '',
             activo: true,
         });
+        setOriginalData(null);
         setEditando(false);
         setModalOpen(false);
     };
@@ -69,148 +89,190 @@ export default function Emisor() {
     };
 
     const handleEdit = (emisor) => {
-        setFormData({
+        const datos = {
             ...emisor,
             activo: Boolean(emisor.activo),
-        });
+        };
+        setFormData(datos);
+        setOriginalData(datos);
         setEditando(true);
         setModalOpen(true);
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setCargando(true);
-        setErrorApi(null);
+        if (rol !== 'ADMIN') {
+            alertaError('Solo el rol ADMIN puede administrar los datos del emisor.');
+            return;
+        }
 
+        const usuarioIdValido = validarEnteroPositivo(formData.usuario_id, 'Usuario ID');
+        if (!usuarioIdValido) return;
+
+        const rfcLimpio = limpiarTexto(formData.rfc).toUpperCase();
+        if (!REGEX_RFC.test(rfcLimpio)) {
+            alertaCamposCaracteres('El RFC debe tener 12 o 13 caracteres válidos (ej. XAXX010101000).');
+            return;
+        }
+
+        const razonValida = validarTexto(formData.razon_social, 'Razón Social', {
+            min: 3,
+            max: 150,
+        });
+        if (!razonValida) return;
+
+        const regimenValido = validarTexto(formData.regimen_fiscal, 'Régimen Fiscal', {
+            min: 3,
+            max: 100,
+        });
+        if (!regimenValido) return;
+
+        const emailLimpio = limpiarTexto(formData.email).toLowerCase();
+        if (!REGEX_EMAIL.test(emailLimpio) || emailLimpio.length > 100) {
+            alertaCamposCaracteres('Ingresa un correo electrónico válido.');
+            return;
+        }
+
+        const direccionValida = validarTexto(formData.direccion, 'Dirección', {
+            min: 5,
+            max: 250,
+        });
+        if (!direccionValida) return;
+
+        if (
+            editando &&
+            originalData &&
+            Number(originalData.usuario_id) === usuarioIdValido &&
+            originalData.rfc === rfcLimpio &&
+            originalData.razon_social === razonValida &&
+            originalData.regimen_fiscal === regimenValido &&
+            originalData.email === emailLimpio &&
+            originalData.direccion === direccionValida &&
+            originalData.activo === formData.activo
+        ) {
+            alertaSinCambios();
+            return;
+        }
+
+        setCargando(true);
         try {
             if (editando) {
                 setEmisores((prev) =>
                     prev.map((item) =>
-                        item.emisor_id === formData.emisor_id ? { ...formData } : item
+                        item.emisor_id === formData.emisor_id
+                            ? {
+                                ...item,
+                                usuario_id: usuarioIdValido,
+                                rfc: rfcLimpio,
+                                razon_social: razonValida,
+                                regimen_fiscal: regimenValido,
+                                email: emailLimpio,
+                                direccion: direccionValida,
+                                activo: formData.activo ? 1 : 0,
+                            }
+                            : item
                     )
                 );
+                resetForm();
+                toast.fire({ icon: 'success', title: 'Emisor actualizado' });
             } else {
                 await apiFetch('/emisores', {
                     method: 'POST',
                     body: JSON.stringify({
-                        usuario_id: Number(formData.usuario_id),
-                        rfc: formData.rfc.toUpperCase(),
-                        razon_social: formData.razon_social,
-                        regimen_fiscal: formData.regimen_fiscal,
-                        email: formData.email,
-                        direccion: formData.direccion,
+                        usuario_id: usuarioIdValido,
+                        rfc: rfcLimpio,
+                        razon_social: razonValida,
+                        regimen_fiscal: regimenValido,
+                        email: emailLimpio,
+                        direccion: direccionValida,
                         activo: formData.activo ? 1 : 0,
                     }),
                 });
+                resetForm();
+                await alertaExito('Emisor registrado correctamente.');
                 await cargarEmisores();
             }
-            resetForm();
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
     };
 
-    const handleDelete = (emisor_id) => {
-        if (window.confirm('¿Estás seguro de que deseas eliminar este emisor?')) {
-            setEmisores((prev) => prev.filter((item) => item.emisor_id !== emisor_id));
-            if (formData.emisor_id === emisor_id) {
-                resetForm();
-            }
+    const handleDelete = async (emisor_id) => {
+        if (rol !== 'ADMIN') {
+            alertaError('Solo el rol ADMIN puede eliminar emisores.');
+            return;
         }
+
+        const confirmado = await confirmarEliminar();
+        if (!confirmado) return;
+
+        setEmisores((prev) => prev.filter((item) => item.emisor_id !== emisor_id));
+        if (formData.emisor_id === emisor_id) {
+            resetForm();
+        }
+        toast.fire({ icon: 'success', title: 'Emisor eliminado' });
     };
+
+    const columnas = [
+        { label: 'ID' },
+        { label: 'Usuario ID' },
+        { label: 'RFC' },
+        { label: 'Razón Social' },
+        { label: 'Régimen' },
+        { label: 'Email' },
+        { label: 'Estado' },
+        ...(rol === 'ADMIN' ? [{ label: 'Acciones', className: 'col-acciones' }] : []),
+    ];
 
     return (
         <div className="pantalla-principal-container">
-            {/* HEADER */}
-            <div className="pantalla-header">
-                <div className="pantalla-titulo">
-                    <span className="titulo-icono">
-                        <span className="material-symbols-outlined">domain</span>
-                    </span>
-                    <div>
-                        <h2>Gestión de Emisores</h2>
-                        <p>
-                            {emisores.length}{' '}
-                            {emisores.length === 1 ? 'emisor registrado' : 'emisores registrados'}
-                        </p>
-                    </div>
-                </div>
-                <AddButton onClick={handleAbrirCrear}>Nuevo Emisor</AddButton>
-            </div>
+            <PageHeader
+                icon="domain"
+                title="Gestión de Emisores"
+                subtitle={`${emisores.length} ${emisores.length === 1 ? 'emisor registrado' : 'emisores registrados'}`}
+            >
+                {rol === 'ADMIN' && (
+                    <AddButton onClick={handleAbrirCrear}>Nuevo Emisor</AddButton>
+                )}
+            </PageHeader>
 
-            {errorApi && (
-                <div className="alerta-error" role="alert">
-                    <span className="material-symbols-outlined">error</span> {errorApi}
-                </div>
-            )}
-
-            {cargando && (
+            {cargando ? (
                 <div className="cargando-texto">
                     <span className="spinner" /> Cargando emisores desde AWS...
                 </div>
-            )}
-
-            {/* TABLA */}
-            {!cargando && (
-                <div className="tabla-contenedor">
-                    <table className="tabla-servicios">
-                        <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Usuario ID</th>
-                            <th>RFC</th>
-                            <th>Razón Social</th>
-                            <th>Régimen</th>
-                            <th>Email</th>
-                            <th>Estado</th>
-                            <th className="col-acciones">Acciones</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        {emisores.length === 0 ? (
-                            <tr>
-                                <td colSpan="8">
-                                    <div className="tabla-vacia">
-                                        <span className="material-symbols-outlined">inbox</span>
-                                        <span>No hay emisores registrados</span>
+            ) : (
+                <DataTable
+                    columns={columnas}
+                    data={emisores}
+                    emptyMessage="No hay emisores registrados"
+                    renderRow={(item) => (
+                        <tr key={item.emisor_id} className="fila-servicio">
+                            <td><span className="texto-id">{item.emisor_id}</span></td>
+                            <td><span className="texto-id">{item.usuario_id}</span></td>
+                            <td className="texto-nombre">{item.rfc}</td>
+                            <td>{item.razon_social}</td>
+                            <td>{item.regimen_fiscal}</td>
+                            <td>{item.email}</td>
+                            <td>
+                                <span className="chip-categoria">
+                                    {item.activo ? 'Activo' : 'Inactivo'}
+                                </span>
+                            </td>
+                            {rol === 'ADMIN' && (
+                                <td>
+                                    <div className="acciones-tabla">
+                                        <EditButton onClick={() => handleEdit(item)} />
+                                        <DeleteButton onClick={() => handleDelete(item.emisor_id)} />
                                     </div>
                                 </td>
-                            </tr>
-                        ) : (
-                            emisores.map((item) => (
-                                <tr key={item.emisor_id} className="fila-servicio">
-                                    <td>
-                                        <span className="texto-id">{item.emisor_id}</span>
-                                    </td>
-                                    <td>
-                                        <span className="texto-id">{item.usuario_id}</span>
-                                    </td>
-                                    <td className="texto-nombre">{item.rfc}</td>
-                                    <td>{item.razon_social}</td>
-                                    <td>{item.regimen_fiscal}</td>
-                                    <td>{item.email}</td>
-                                    <td>
-                                            <span className="chip-categoria">
-                                                {item.activo ? 'Activo' : 'Inactivo'}
-                                            </span>
-                                    </td>
-                                    <td>
-                                        <div className="acciones-tabla">
-                                            <EditButton onClick={() => handleEdit(item)} />
-                                            <DeleteButton onClick={() => handleDelete(item.emisor_id)} />
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                        </tbody>
-                    </table>
-                </div>
+                            )}
+                        </tr>
+                    )}
+                />
             )}
 
-            {/* MODAL */}
             {modalOpen && (
                 <div className="modal-overlay" onClick={resetForm}>
                     <div className="modal-contenido" onClick={(e) => e.stopPropagation()}>
@@ -226,6 +288,7 @@ export default function Emisor() {
                                 <Input
                                     label="Usuario ID (FK)"
                                     type="number"
+                                    min="1"
                                     name="usuario_id"
                                     value={formData.usuario_id}
                                     onChange={handleChange}
@@ -239,6 +302,7 @@ export default function Emisor() {
                                     value={formData.rfc}
                                     onChange={handleChange}
                                     placeholder="XAXX010101000"
+                                    maxLength={13}
                                     required
                                 />
                             </div>
@@ -250,6 +314,7 @@ export default function Emisor() {
                                 value={formData.razon_social}
                                 onChange={handleChange}
                                 placeholder="Empresa S.A. de C.V."
+                                maxLength={150}
                                 required
                             />
 
@@ -261,6 +326,7 @@ export default function Emisor() {
                                     value={formData.regimen_fiscal}
                                     onChange={handleChange}
                                     placeholder="601 - General de Ley"
+                                    maxLength={100}
                                     required
                                 />
                                 <Input
@@ -270,6 +336,7 @@ export default function Emisor() {
                                     value={formData.email}
                                     onChange={handleChange}
                                     placeholder="contacto@emisor.com"
+                                    maxLength={100}
                                     required
                                 />
                             </div>
@@ -281,6 +348,7 @@ export default function Emisor() {
                                 value={formData.direccion}
                                 onChange={handleChange}
                                 placeholder="Calle, número, colonia, CP"
+                                maxLength={250}
                                 required
                             />
 

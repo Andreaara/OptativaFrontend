@@ -1,14 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import Input from '../Componentes/Input.jsx';
+import PageHeader from '../Componentes/PageHeader.jsx';
+import DataTable from '../Componentes/DataTable.jsx';
 import { AddButton, EditButton, DeleteButton } from '../Componentes/Button.jsx';
 import { apiFetch } from '../Utils/api.js';
+import { obtenerRolActual } from '../Routes/Protectedroutes.jsx';
+import {
+    limpiarTexto,
+    validarEnteroPositivo,
+    validarMontoPositivo,
+} from '../Utils/validaciones.js';
+import {
+    alertaExito,
+    alertaError,
+    alertaCamposCaracteres,
+    confirmarEliminar,
+    toast,
+} from '../Utils/Alerts.js';
 import '../Estilos/Estilos.css';
 
 export default function FacturaDetalles() {
     const [detalles, setDetalles] = useState([]);
     const [cargando, setCargando] = useState(false);
-    const [errorApi, setErrorApi] = useState(null);
     const [cfdiJson, setCfdiJson] = useState(null);
+    const rol = obtenerRolActual();
 
     const [formData, setFormData] = useState({
         detalle_id: null,
@@ -21,17 +36,14 @@ export default function FacturaDetalles() {
 
     const [editando, setEditando] = useState(false);
     const [modalOpen, setModalOpen] = useState(false);
-    const [modalEliminarOpen, setModalEliminarOpen] = useState(false);
-    const [detalleAEliminar, setDetalleAEliminar] = useState(null);
 
     const cargarDetalles = async () => {
         setCargando(true);
-        setErrorApi(null);
         try {
             const data = await apiFetch('/detalles');
             setDetalles(Array.isArray(data) ? data : []);
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
@@ -80,95 +92,107 @@ export default function FacturaDetalles() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setCargando(true);
-        setErrorApi(null);
 
+        const facturaIdValido = validarEnteroPositivo(formData.factura_id, 'Factura ID');
+        if (!facturaIdValido) return;
+
+        const servicioLimpio = limpiarTexto(formData.servicio_id).toUpperCase();
+        if (!servicioLimpio || !/^[A-Z0-9-]{2,20}$/.test(servicioLimpio)) {
+            alertaCamposCaracteres('El ID del Servicio debe tener formato válido (ej. SERV-001).');
+            return;
+        }
+
+        const cantidadValida = validarEnteroPositivo(formData.cantidad, 'Cantidad');
+        if (!cantidadValida) return;
+
+        const precioValido = validarMontoPositivo(formData.precio_unitario, 'Precio Unitario');
+        if (!precioValido) return;
+
+        setCargando(true);
         try {
             if (editando) {
                 setDetalles((prev) =>
                     prev.map((item) =>
-                        item.detalle_id === formData.detalle_id ? { ...formData } : item
+                        item.detalle_id === formData.detalle_id
+                            ? {
+                                ...item,
+                                factura_id: facturaIdValido,
+                                servicio_id: servicioLimpio,
+                                cantidad: cantidadValida,
+                                precio_unitario: precioValido,
+                                subtotal: (cantidadValida * precioValido).toFixed(2),
+                            }
+                            : item
                     )
                 );
+                resetForm();
+                toast.fire({ icon: 'success', title: 'Detalle actualizado en vista' });
             } else {
-                // Al insertar detalle en RDS, se disparan los SP de cálculo de IVA, descuentos y actualización de encabezado
                 await apiFetch('/detalles', {
                     method: 'POST',
                     body: JSON.stringify({
-                        factura_id: Number(formData.factura_id),
-                        servicio_id: formData.servicio_id.trim(),
-                        cantidad: Number(formData.cantidad),
-                        precio_unitario: parseFloat(formData.precio_unitario),
+                        factura_id: facturaIdValido,
+                        servicio_id: servicioLimpio,
+                        cantidad: cantidadValida,
+                        precio_unitario: precioValido,
                     }),
                 });
+                resetForm();
+                await alertaExito('Detalle agregado y totales recalculados con Stored Procedures.');
                 await cargarDetalles();
             }
-            resetForm();
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
     };
 
-    const handleAbrirEliminar = (item) => {
-        setDetalleAEliminar(item);
-        setModalEliminarOpen(true);
-    };
+    const handleEliminar = async (item) => {
+        const confirmado = await confirmarEliminar();
+        if (!confirmado) return;
 
-    const handleConfirmarEliminar = () => {
-        if (!detalleAEliminar) return;
-
-        setDetalles((prev) =>
-            prev.filter((item) => item.detalle_id !== detalleAEliminar.detalle_id)
-        );
-
-        if (formData.detalle_id === detalleAEliminar.detalle_id) {
+        setDetalles((prev) => prev.filter((d) => d.detalle_id !== item.detalle_id));
+        if (formData.detalle_id === item.detalle_id) {
             resetForm();
         }
-
-        setModalEliminarOpen(false);
-        setDetalleAEliminar(null);
+        toast.fire({ icon: 'success', title: 'Detalle eliminado' });
     };
 
-    // Ejecuta sp_obtener_cfdi_json para una factura
     const handleVerCfdi = async (facturaId) => {
         setCargando(true);
-        setErrorApi(null);
         try {
             const data = await apiFetch(`/reportes?tipo=cfdi&factura_id=${facturaId}`);
             setCfdiJson(data);
+            toast.fire({ icon: 'success', title: `CFDI JSON generado para factura #${facturaId}` });
         } catch (err) {
-            setErrorApi(err.message);
+            alertaError(err.message);
         } finally {
             setCargando(false);
         }
     };
 
+    const columnas = [
+        { label: 'ID' },
+        { label: 'Factura ID' },
+        { label: 'Servicio ID' },
+        { label: 'Cantidad' },
+        { label: 'P. Unitario' },
+        { label: 'Subtotal' },
+        { label: 'Acciones', className: 'col-acciones' },
+    ];
+
     return (
         <div className="pantalla-principal-container">
-            {/* HEADER */}
-            <div className="pantalla-header">
-                <div className="pantalla-titulo">
-                    <span className="titulo-icono">
-                        <span className="material-symbols-outlined">description</span>
-                    </span>
-                    <div>
-                        <h2>Detalles de Facturas</h2>
-                        <p>
-                            {detalles.length}{' '}
-                            {detalles.length === 1 ? 'detalle registrado' : 'detalles registrados'}
-                        </p>
-                    </div>
-                </div>
-                <AddButton onClick={handleAbrirCrear}>Agregar Detalle</AddButton>
-            </div>
-
-            {errorApi && (
-                <div className="alerta-error" role="alert">
-                    <span className="material-symbols-outlined">error</span> {errorApi}
-                </div>
-            )}
+            <PageHeader
+                icon="description"
+                title="Detalles de Facturas"
+                subtitle={`${detalles.length} ${detalles.length === 1 ? 'detalle registrado' : 'detalles registrados'}`}
+            >
+                {rol !== 'AUDITOR' && (
+                    <AddButton onClick={handleAbrirCrear}>Agregar Detalle</AddButton>
+                )}
+            </PageHeader>
 
             {cfdiJson && (
                 <div className="modal-contenido" style={{ marginBottom: '16px', padding: '16px' }}>
@@ -184,76 +208,46 @@ export default function FacturaDetalles() {
                 </div>
             )}
 
-            {cargando && (
+            {cargando ? (
                 <div className="cargando-texto">
                     <span className="spinner" /> Sincronizando detalles con AWS...
                 </div>
-            )}
-
-            {/* TABLA */}
-            {!cargando && (
-                <div className="tabla-contenedor">
-                    <table className="tabla-servicios">
-                        <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Factura ID</th>
-                            <th>Servicio ID</th>
-                            <th>Cantidad</th>
-                            <th>P. Unitario</th>
-                            <th>Subtotal</th>
-                            <th className="col-acciones">Acciones</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        {detalles.length === 0 ? (
-                            <tr>
-                                <td colSpan="7">
-                                    <div className="tabla-vacia">
-                                        <span className="material-symbols-outlined">inbox</span>
-                                        <span>No hay detalles registrados</span>
-                                    </div>
-                                </td>
-                            </tr>
-                        ) : (
-                            detalles.map((item) => (
-                                <tr key={item.detalle_id} className="fila-servicio">
-                                    <td>
-                                        <span className="texto-id">{item.detalle_id}</span>
-                                    </td>
-                                    <td>
-                                        <span className="texto-id">{item.factura_id}</span>
-                                    </td>
-                                    <td>
-                                        <span className="texto-id">{item.servicio_id}</span>
-                                    </td>
-                                    <td>{item.cantidad}</td>
-                                    <td>${parseFloat(item.precio_unitario || 0).toFixed(2)}</td>
-                                    <td>
-                                        <strong>${parseFloat(item.subtotal || 0).toFixed(2)}</strong>
-                                    </td>
-                                    <td>
-                                        <div className="acciones-tabla">
-                                            <button
-                                                type="button"
-                                                title="Ver CFDI JSON"
-                                                onClick={() => handleVerCfdi(item.factura_id)}
-                                            >
-                                                <span className="material-symbols-outlined">data_object</span>
-                                            </button>
+            ) : (
+                <DataTable
+                    columns={columnas}
+                    data={detalles}
+                    emptyMessage="No hay detalles registrados"
+                    renderRow={(item) => (
+                        <tr key={item.detalle_id} className="fila-servicio">
+                            <td><span className="texto-id">{item.detalle_id}</span></td>
+                            <td><span className="texto-id">{item.factura_id}</span></td>
+                            <td><span className="texto-id">{item.servicio_id}</span></td>
+                            <td>{item.cantidad}</td>
+                            <td>${parseFloat(item.precio_unitario || 0).toFixed(2)}</td>
+                            <td><strong>${parseFloat(item.subtotal || 0).toFixed(2)}</strong></td>
+                            <td>
+                                <div className="acciones-tabla">
+                                    <button
+                                        type="button"
+                                        className="btn-icono btn-icono--neutro"
+                                        title="Ver CFDI JSON"
+                                        onClick={() => handleVerCfdi(item.factura_id)}
+                                    >
+                                        <span className="material-symbols-outlined">data_object</span>
+                                    </button>
+                                    {rol !== 'AUDITOR' && (
+                                        <>
                                             <EditButton onClick={() => handleEdit(item)} />
-                                            <DeleteButton onClick={() => handleAbrirEliminar(item)} />
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                        </tbody>
-                    </table>
-                </div>
+                                            <DeleteButton onClick={() => handleEliminar(item)} />
+                                        </>
+                                    )}
+                                </div>
+                            </td>
+                        </tr>
+                    )}
+                />
             )}
 
-            {/* MODAL CREAR / EDITAR */}
             {modalOpen && (
                 <div className="modal-overlay" onClick={resetForm}>
                     <div className="modal-contenido" onClick={(e) => e.stopPropagation()}>
@@ -269,6 +263,7 @@ export default function FacturaDetalles() {
                                 <Input
                                     label="Factura ID (FK)"
                                     type="number"
+                                    min="1"
                                     name="factura_id"
                                     value={formData.factura_id}
                                     onChange={handleChange}
@@ -280,7 +275,8 @@ export default function FacturaDetalles() {
                                     name="servicio_id"
                                     value={formData.servicio_id}
                                     onChange={handleChange}
-                                    placeholder="Ej. E-098"
+                                    placeholder="Ej. SERV-001"
+                                    maxLength={20}
                                     required
                                 />
                             </div>
@@ -289,6 +285,7 @@ export default function FacturaDetalles() {
                                 <Input
                                     label="Cantidad"
                                     type="number"
+                                    min="1"
                                     name="cantidad"
                                     value={formData.cantidad}
                                     onChange={handleChange}
@@ -298,6 +295,7 @@ export default function FacturaDetalles() {
                                     label="Precio Unitario ($)"
                                     type="number"
                                     step="0.01"
+                                    min="0.01"
                                     name="precio_unitario"
                                     value={formData.precio_unitario}
                                     onChange={handleChange}
@@ -324,41 +322,6 @@ export default function FacturaDetalles() {
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
-
-            {/* MODAL ELIMINAR */}
-            {modalEliminarOpen && detalleAEliminar && (
-                <div className="modal-overlay" onClick={() => setModalEliminarOpen(false)}>
-                    <div className="modal-contenido" onClick={(e) => e.stopPropagation()}>
-                        <h3 className="titulo-eliminar">
-                            <span className="material-symbols-outlined">warning</span>
-                            Eliminar Detalle
-                        </h3>
-
-                        <p className="texto-confirmacion">
-                            ¿Seguro que deseas eliminar este detalle (
-                            <span className="texto-id">{detalleAEliminar.detalle_id}</span>)? Esta acción no
-                            se puede deshacer.
-                        </p>
-
-                        <div className="modal-acciones">
-                            <button
-                                type="button"
-                                className="btn-cancelar"
-                                onClick={() => setModalEliminarOpen(false)}
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                type="button"
-                                className="btn-peligro"
-                                onClick={handleConfirmarEliminar}
-                            >
-                                Eliminar
-                            </button>
-                        </div>
                     </div>
                 </div>
             )}

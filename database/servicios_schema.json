@@ -1,0 +1,73 @@
+{
+    "Table": {
+        "AttributeDefinitions": [
+            {
+                "AttributeName": "categoria_id",
+                "AttributeType": "S"
+            },
+            {
+                "AttributeName": "servicio_id",
+                "AttributeType": "S"
+            }
+        ],
+        "TableName": "Servicios",
+        "KeySchema": [
+            {
+                "AttributeName": "servicio_id",
+                "KeyType": "HASH"
+            }
+        ],
+        "TableStatus": "ACTIVE",
+        "CreationDateTime": "2026-09-23T04:47:53.552000+00:00",
+        "ProvisionedThroughput": {
+            "NumberOfDecreasesToday": 0,
+            "ReadCapacityUnits": 0,
+            "WriteCapacityUnits": 0
+        },
+        "TableSizeBytes": 178369,
+        "ItemCount": 104,
+        "TableArn": "arn:aws:dynamodb:us-east-1:655968113060:table/Servicios",
+        "TableId": "d36aad3a-442f-4a91-b6c8-327711494685",
+        "BillingModeSummary": {
+            "BillingMode": "PAY_PER_REQUEST",
+            "LastUpdateToPayPerRequestDateTime": "2026-09-23T04:47:53.552000+00:00"
+        },
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "categoria_id-index",
+                "KeySchema": [
+                    {
+                        "AttributeName": "categoria_id",
+                        "KeyType": "HASH"
+                    }
+                ],
+                "Projection": {
+                    "ProjectionType": "ALL"
+                },
+                "IndexStatus": "ACTIVE",
+                "ProvisionedThroughput": {
+                    "NumberOfDecreasesToday": 0,
+                    "ReadCapacityUnits": 0,
+                    "WriteCapacityUnits": 0
+                },
+                "IndexSizeBytes": 178369,
+                "ItemCount": 104,
+                "IndexArn": "arn:aws:dynamodb:us-east-1:655968113060:table/Servicios/index/categoria_id-index",
+                "WarmThroughput": {
+                    "ReadUnitsPerSecond": 12000,
+                    "WriteUnitsPerSecond": 4000,
+                    "Status": "ACTIVE"
+                }
+            }
+        ],
+        "TableClassSummary": {
+            "TableClass": "STANDARD"
+        },
+        "DeletionProtectionEnabled": false,
+        "WarmThroughput": {
+            "ReadUnitsPerSecond": 12000,
+            "WriteUnitsPerSecond": 4000,
+            "Status": "ACTIVE"
+        }
+    }
+}

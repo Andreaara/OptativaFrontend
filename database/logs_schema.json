@@ -1,0 +1,49 @@
+{
+    "Table": {
+        "AttributeDefinitions": [
+            {
+                "AttributeName": "entidad_id",
+                "AttributeType": "S"
+            },
+            {
+                "AttributeName": "timestamp_utc",
+                "AttributeType": "S"
+            }
+        ],
+        "TableName": "Logs_auditoria",
+        "KeySchema": [
+            {
+                "AttributeName": "entidad_id",
+                "KeyType": "HASH"
+            },
+            {
+                "AttributeName": "timestamp_utc",
+                "KeyType": "RANGE"
+            }
+        ],
+        "TableStatus": "ACTIVE",
+        "CreationDateTime": "2026-11-15T19:04:21.932000+00:00",
+        "ProvisionedThroughput": {
+            "NumberOfDecreasesToday": 0,
+            "ReadCapacityUnits": 0,
+            "WriteCapacityUnits": 0
+        },
+        "TableSizeBytes": 282,
+        "ItemCount": 2,
+        "TableArn": "arn:aws:dynamodb:us-east-1:655968113060:table/Logs_auditoria",
+        "TableId": "4b565005-e695-4f2e-871b-07b7d4f984d1",
+        "BillingModeSummary": {
+            "BillingMode": "PAY_PER_REQUEST",
+            "LastUpdateToPayPerRequestDateTime": "2026-11-15T19:04:21.932000+00:00"
+        },
+        "TableClassSummary": {
+            "TableClass": "STANDARD"
+        },
+        "DeletionProtectionEnabled": false,
+        "WarmThroughput": {
+            "ReadUnitsPerSecond": 12000,
+            "WriteUnitsPerSecond": 4000,
+            "Status": "ACTIVE"
+        }
+    }
+}

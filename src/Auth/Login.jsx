@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Input from "../Componentes/Input.jsx";
 import { apiFetch } from "../Utils/api.js";
+import { mensajeErrorEmail, mensajeErrorPassword, limpiarTexto } from "../Utils/validaciones.js";
 import '../Estilos/Estilos.css';
 
 export default function Login() {
@@ -16,25 +17,16 @@ export default function Login() {
     const [cargando, setCargando] = useState(false);
     const [errorLogin, setErrorLogin] = useState('');
 
-    // Validaciones inmediatas por campo
+    // Ahora usa las funciones centralizadas de validaciones.js
     const validarCampo = (name, value) => {
         let error = '';
 
         if (name === 'email') {
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!value.trim()) {
-                error = 'El correo electrónico es obligatorio';
-            } else if (!emailRegex.test(value)) {
-                error = 'Ingresa un correo electrónico válido';
-            }
+            error = mensajeErrorEmail(value);
         }
 
         if (name === 'password') {
-            if (!value) {
-                error = 'La contraseña es obligatoria';
-            } else if (value.length < 6) {
-                error = 'La contraseña debe tener al menos 6 caracteres';
-            }
+            error = mensajeErrorPassword(value, 6);
         }
 
         setErrores((prev) => ({ ...prev, [name]: error ? { message: error } : null }));
@@ -69,12 +61,11 @@ export default function Login() {
             const data = await apiFetch('/login', {
                 method: 'POST',
                 body: JSON.stringify({
-                    correo: formData.email,
+                    correo: limpiarTexto(formData.email),
                     contrasena: formData.password,
                 }),
             });
 
-            // Guardamos el JWT real y los datos del usuario
             localStorage.setItem('token', data.token);
             localStorage.setItem('usuario', JSON.stringify(data.usuario));
             navigate('/Pantallas/Facturas');

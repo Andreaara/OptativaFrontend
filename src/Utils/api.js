@@ -1,6 +1,10 @@
-export const API_RDS_URL = 'https://zdqh4zqlfl.execute-api.us-east-1.amazonaws.com';
+export const API_RDS_URL = import.meta.env.VITE_API_RDS_URL;
 
 export async function apiFetch(ruta, opciones = {}) {
+    if (!API_RDS_URL) {
+        throw new Error('La URL de la API (VITE_API_RDS_URL) no está configurada en el archivo .env');
+    }
+
     const token = localStorage.getItem('token');
     const headers = {
         'Content-Type': 'application/json',
@@ -13,9 +17,23 @@ export async function apiFetch(ruta, opciones = {}) {
         headers,
     });
 
-    const data = await res.json();
-    if (!res.ok) {
-        throw new Error(data.error || `Error ${res.status}`);
+    const textoRespuesta = await res.text();
+    let data = null;
+
+    if (textoRespuesta) {
+        try {
+            data = JSON.parse(textoRespuesta);
+        } catch {
+            if (!res.ok) {
+                throw new Error(`Error del servidor (${res.status}): respuesta inesperada.`);
+            }
+            return textoRespuesta;
+        }
     }
+
+    if (!res.ok) {
+        throw new Error(data?.error || data?.message || `Error ${res.status}`);
+    }
+
     return data;
 }

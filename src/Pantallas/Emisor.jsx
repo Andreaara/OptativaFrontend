@@ -9,6 +9,7 @@ import {
     limpiarTexto,
     validarTexto,
     validarEnteroPositivo,
+    validarEmail,
 } from '../Utils/validaciones.js';
 import {
     alertaExito,
@@ -21,7 +22,6 @@ import {
 import '../Estilos/Estilos.css';
 
 const REGEX_RFC = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/;
-const REGEX_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Emisor() {
     const [emisores, setEmisores] = useState([]);
@@ -127,9 +127,10 @@ export default function Emisor() {
         });
         if (!regimenValido) return;
 
-        const emailLimpio = limpiarTexto(formData.email).toLowerCase();
-        if (!REGEX_EMAIL.test(emailLimpio) || emailLimpio.length > 100) {
-            alertaCamposCaracteres('Ingresa un correo electrónico válido.');
+        const emailLimpio = validarEmail(formData.email)?.toLowerCase();
+        if (!emailLimpio) return;
+        if (emailLimpio.length > 100) {
+            alertaCamposCaracteres('El correo electrónico no debe exceder 100 caracteres.');
             return;
         }
 

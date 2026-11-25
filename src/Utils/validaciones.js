@@ -70,3 +70,38 @@ export const validarMontoPositivo = (valor, nombreCampo) => {
     }
     return Number(num.toFixed(2));
 };
+
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export const mensajeErrorEmail = (valor) => {
+    const limpio = limpiarTexto(valor);
+    if (!limpio) return 'El correo electrónico es obligatorio';
+    if (!emailRegex.test(limpio)) return 'Ingresa un correo electrónico válido';
+    return '';
+};
+
+export const mensajeErrorPassword = (valor, min = 6) => {
+    if (!valor) return 'La contraseña es obligatoria';
+    if (valor.length < min) return `La contraseña debe tener al menos ${min} caracteres`;
+    return '';
+};
+
+export const validarEmail = (valor) => {
+    const error = mensajeErrorEmail(valor);
+    if (error) {
+        if (!limpiarTexto(valor)) alertaCamposVacios();
+        else alertaError(`${error}.`);
+        return null;
+    }
+    return limpiarTexto(valor);
+};
+
+export const validarPassword = (valor, min = 6) => {
+    const error = mensajeErrorPassword(valor, min);
+    if (error) {
+        if (!valor) alertaCamposVacios();
+        else alertaError(`${error}.`);
+        return null;
+    }
+    return valor;
+};

@@ -1,0 +1,536 @@
+import json
+import os
+import time
+import hmac
+import hashlib
+import base64
+import datetime
+import boto3
+import pymysql
+from decimal import Decimal
+
+# Configuración desde variables de entorno (sin secretos hardcodeados)
+DB_HOST = os.environ['DB_HOST']
+DB_USER = os.environ.get('DB_USER', 'admin')
+DB_PASS = os.environ['DB_PASS']
+JWT_SECRET = os.environ['JWT_SECRET']
+
+dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+logs_table = dynamodb.Table('Logs_auditoria')
+
+def get_conn(db_name='mysql_facturacion'):
+    return pymysql.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASS, database=db_name,
+        cursorclass=pymysql.cursors.DictCursor, autocommit=True
+    )
+
+def json_serial(obj):
+    if isinstance(obj, (datetime.datetime, datetime.date)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+def response(status, body):
+    return {
+        'statusCode': status,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+            'Access-Control-Allow-Methods': 'OPTIONS,GET,POST,PUT,DELETE'
+        },
+        'body': json.dumps(body, default=json_serial)
+    }
+
+# --- SEGURIDAD: HASHING Y JWT ---
+def hash_password(password):
+    salt = os.environ.get('PASSWORD_SALT', 'utez_cloud_salt')
+    return hashlib.sha256((password + salt).encode()).hexdigest()
+
+def create_jwt(payload):
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip("=")
+    payload['exp'] = int(time.time()) + 86400  # 24 horas
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    sig = hmac.new(JWT_SECRET.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest()
+    signature = base64.urlsafe_b64encode(sig).decode().rstrip("=")
+    return f"{header}.{body}.{signature}"
+
+def verify_jwt(event):
+    headers = event.get('headers') or {}
+    auth = headers.get('authorization') or headers.get('Authorization') or ''
+    if not auth.startswith('Bearer '):
+        return None
+    token = auth.split(' ')[1]
+    try:
+        header, body, signature = token.split('.')
+        expected_sig = base64.urlsafe_b64encode(
+            hmac.new(JWT_SECRET.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest()
+        ).decode().rstrip("=")
+        if not hmac.compare_digest(signature, expected_sig):
+            return None
+        padded = body + '=' * (-len(body) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded))
+        if data.get('exp', 0) < time.time():
+            return None
+        return data
+    except Exception:
+        return None
+
+def registrar_auditoria(entidad_id, usuario_id, accion, detalles):
+    try:
+        logs_table.put_item(Item={
+            'entidad_id': str(entidad_id),
+            'timestamp_utc': datetime.datetime.utcnow().isoformat() + 'Z',
+            'usuario_id': str(usuario_id),
+            'accion': accion,
+            'detalles_json': json.dumps(detalles, default=json_serial)
+        })
+    except Exception as e:
+        print("Error log DynamoDB:", e)
+
+# --- HANDLER PRINCIPAL ---
+def lambda_handler(event, context):
+    method = event.get('requestContext', {}).get('http', {}).get('method') or event.get('httpMethod', 'GET')
+    if method == 'OPTIONS':
+        return response(200, {'message': 'CORS OK'})
+
+    path = event.get('rawPath') or event.get('path', '/')
+    query = event.get('queryStringParameters') or {}
+    body = {}
+    if event.get('body'):
+        try:
+            body = json.loads(event['body']) if isinstance(event['body'], str) else event['body']
+        except Exception:
+            return response(400, {'error': 'JSON inválido'})
+
+    try:
+        # 1. RUTA PÚBLICA DE AUTENTICACIÓN
+        if path.endswith('/login') and method == 'POST':
+            conn = get_conn('mysql_seguridad')
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT c.credencial_id, c.usuario_id, c.correo, c.contrasena, r.rol, u.nombre
+                        FROM Credenciales c
+                        JOIN Roles r ON c.rol_id = r.rol_id
+                        JOIN Usuarios u ON c.usuario_id = u.usuario_id
+                        WHERE c.correo = %s
+                    """, (body.get('correo'),))
+                    user = cur.fetchone()
+            finally:
+                conn.close()
+
+            if not user or user['contrasena'] != hash_password(body.get('contrasena', '')):
+                return response(401, {'error': 'Credenciales incorrectas'})
+
+            token = create_jwt({
+                'usuario_id': user['usuario_id'],
+                'correo': user['correo'],
+                'rol': user['rol']
+            })
+            return response(200, {
+                'token': token,
+                'usuario': {'id': user['usuario_id'], 'nombre': user['nombre'], 'rol': user['rol']}
+            })
+
+        # Registro
+        if path.endswith('/registro-admin') and method == 'POST':
+            conn = get_conn('mysql_seguridad')
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO Usuarios (nombre, apellido_paterno, apellido_materno, genero, telefono, fecha_nacimiento) VALUES (%s,%s,%s,%s,%s,%s)",
+                        (body['nombre'], body['apellido_paterno'], body.get('apellido_materno', ''), body.get('genero', ''), body.get('telefono', ''), body.get('fecha_nacimiento', '2000-01-01'))
+                    )
+                    uid = cur.lastrowid
+                    cur.execute(
+                        "INSERT INTO Credenciales (usuario_id, rol_id, correo, contrasena) VALUES (%s, %s, %s, %s)",
+                        (uid, 2, body['correo'], hash_password(body['contrasena']))
+                    )
+            finally:
+                conn.close()
+            return response(201, {'message': 'Usuario registrado con rol FACTURADOR', 'usuario_id': uid})
+
+        # 2. VALIDACIÓN JWT
+        user_auth = verify_jwt(event)
+        if not user_auth:
+            return response(401, {'error': 'Token JWT inválido, requerido o expirado'})
+
+        uid_actual = user_auth['usuario_id']
+        rol_actual = user_auth.get('rol', '').upper()
+
+        if rol_actual not in ['ADMIN', 'FACTURADOR', 'AUDITOR']:
+            return response(403, {'error': 'Rol no reconocido en el token'})
+
+        # MÓDULO SEGURIDAD (RDS 2: mysql_seguridad)
+        if '/usuarios' in path:
+            if rol_actual != 'ADMIN':
+                return response(403, {'error': 'Acceso denegado: solo ADMIN gestiona usuarios'})
+            conn = get_conn('mysql_seguridad')
+            try:
+                with conn.cursor() as cur:
+                    if method == 'GET':
+                        cur.execute("SELECT * FROM Usuarios")
+                        return response(200, cur.fetchall())
+                    elif method == 'POST':
+                        cur.execute(
+                            "INSERT INTO Usuarios (nombre, apellido_paterno, apellido_materno, genero, telefono, fecha_nacimiento) VALUES (%s,%s,%s,%s,%s,%s)",
+                            (body['nombre'], body['apellido_paterno'], body.get('apellido_materno'), body.get('genero'), body.get('telefono'), body.get('fecha_nacimiento'))
+                        )
+                        registrar_auditoria(f"USR-{cur.lastrowid}", uid_actual, "CREAR_USUARIO", {'nombre': body['nombre']})
+                        return response(201, {'message': 'Usuario registrado', 'id': cur.lastrowid})
+                    elif method == 'DELETE':
+                        cur.execute("DELETE FROM Usuarios WHERE usuario_id=%s", (query.get('id'),))
+                        registrar_auditoria(f"USR-{query.get('id')}", uid_actual, "ELIMINAR_USUARIO", {'id': query.get('id')})
+                        return response(200, {'message': 'Usuario eliminado'})
+            finally:
+                conn.close()
+
+        if '/credenciales' in path:
+            if rol_actual != 'ADMIN':
+                return response(403, {'error': 'Acceso denegado: solo ADMIN gestiona credenciales'})
+            conn = get_conn('mysql_seguridad')
+            try:
+                with conn.cursor() as cur:
+                    if method == 'GET':
+                        cur.execute("SELECT c.credencial_id, c.usuario_id, c.rol_id, c.correo, r.rol FROM Credenciales c JOIN Roles r ON c.rol_id = r.rol_id")
+                        return response(200, cur.fetchall())
+                    elif method == 'POST':
+                        cur.execute(
+                            "INSERT INTO Credenciales (usuario_id, rol_id, correo, contrasena) VALUES (%s,%s,%s,%s)",
+                            (body['usuario_id'], body.get('rol_id', 2), body['correo'], hash_password(body['contrasena']))
+                        )
+                        registrar_auditoria(f"CRED-{cur.lastrowid}", uid_actual, "CREAR_CREDENCIAL", {'correo': body['correo'], 'rol_id': body.get('rol_id', 2)})
+                        return response(201, {'message': 'Credencial creada'})
+            finally:
+                conn.close()
+
+
+        # --- CATEGORÍAS (RDS 1: mysql_facturacion) ---
+        if '/categorias' in path:
+            conn = get_conn('mysql_facturacion')
+            try:
+                with conn.cursor() as cur:
+                    # Detectar nombre exacto de tabla en RDS (Categorias o Categoria)
+                    cur.execute("""
+                        SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+                        WHERE TABLE_SCHEMA = 'mysql_facturacion'
+                          AND TABLE_NAME IN ('Categorias', 'Categoria')
+                        LIMIT 1
+                    """)
+                    row_tbl = cur.fetchone()
+                    tabla_cat = row_tbl['TABLE_NAME'] if row_tbl else 'Categorias'
+
+                    if method == 'GET':
+                        cur.execute(f"SELECT COUNT(*) AS total FROM `{tabla_cat}`")
+                        if cur.fetchone()['total'] == 0:
+                            semillas = [
+                                ('CAT-01', 'Consultoría Fiscal y Tributaria', 'Asesoría fiscal, planeación tributaria y cumplimiento SAT'),
+                                ('CAT-02', 'Auditoría y Contabilidad', 'Auditoría contable, conciliación bancaria y dictámenes'),
+                                ('CAT-03', 'Sistemas ERP y Timbrado CFDI', 'Soporte ERP, timbrado masivo CFDI y migración cloud'),
+                                ('CAT-04', 'Gestión de Nómina y RRHH', 'Cálculo de nómina, retenciones ISR/IVA y seguridad social'),
+                                ('CAT-05', 'Ciberseguridad y Análisis Financiero', 'Seguridad de datos contables y reportes ejecutivos'),
+                            ]
+                            cur.executemany(
+                                f"INSERT INTO `{tabla_cat}` (categoria_id, nombre, descripcion) VALUES (%s, %s, %s)",
+                                semillas
+                            )
+
+                        cur.execute(f"SELECT * FROM `{tabla_cat}` ORDER BY categoria_id ASC")
+                        return response(200, cur.fetchall())
+
+                    if rol_actual != 'ADMIN':
+                        return response(403, {'error': 'Acceso denegado: solo ADMIN modifica categorías'})
+
+                    if method == 'POST':
+                        raw_id = body.get('categoria_id')
+                        if raw_id and str(raw_id).strip():
+                            nuevo_id = str(raw_id).strip().upper()
+                        else:
+                            cur.execute(f"""
+                                SELECT COALESCE(MAX(CAST(REPLACE(categoria_id, 'CAT-', '') AS UNSIGNED)), 0) + 1 AS sig
+                                FROM `{tabla_cat}`
+                                WHERE categoria_id LIKE 'CAT-%'
+                            """)
+                            siguiente = cur.fetchone()['sig']
+                            nuevo_id = f"CAT-{int(siguiente):02d}"
+
+                        nombre = str(body.get('nombre', '')).strip()
+                        descripcion = str(body.get('descripcion') or '').strip()
+
+                        cur.execute(
+                            f"INSERT INTO `{tabla_cat}` (categoria_id, nombre, descripcion) VALUES (%s, %s, %s)",
+                            (nuevo_id, nombre, descripcion)
+                        )
+                        registrar_auditoria(nuevo_id, uid_actual, "CREAR_CATEGORIA", {'nombre': nombre})
+                        return response(201, {
+                            'categoria_id': nuevo_id,
+                            'nombre': nombre,
+                            'descripcion': descripcion
+                        })
+
+                    elif method == 'PUT':
+                        cid = (body.get('categoria_id') or query.get('id') or query.get('categoria_id') or '').strip()
+                        if not cid:
+                            return response(400, {'error': 'Se requiere categoria_id para actualizar'})
+                        cur.execute(
+                            f"UPDATE `{tabla_cat}` SET nombre=%s, descripcion=%s WHERE categoria_id=%s",
+                            (body['nombre'].strip(), body.get('descripcion', '').strip(), cid)
+                        )
+                        if cur.rowcount == 0:
+                            return response(404, {'error': f'Categoría {cid} no encontrada'})
+                        registrar_auditoria(cid, uid_actual, "EDITAR_CATEGORIA", {'nombre': body['nombre']})
+                        return response(200, {'message': 'Categoría actualizada en MySQL'})
+
+                    elif method == 'DELETE':
+                        cid = (query.get('id') or query.get('categoria_id') or body.get('categoria_id') or '').strip()
+                        if not cid:
+                            return response(400, {'error': 'Se requiere categoria_id para eliminar'})
+                        cur.execute(f"DELETE FROM `{tabla_cat}` WHERE categoria_id=%s", (cid,))
+                        if cur.rowcount == 0:
+                            return response(404, {'error': f'Categoría {cid} no encontrada'})
+                        registrar_auditoria(cid, uid_actual, "ELIMINAR_CATEGORIA", {'categoria_id': cid})
+                        return response(200, {'message': 'Categoría eliminada de MySQL'})
+            finally:
+                conn.close()
+
+        # LOGS DE AUDITORÍA (DynamoDB: Logs_auditoria)
+        if '/auditoria' in path and method == 'GET':
+            if rol_actual not in ['ADMIN', 'AUDITOR']:
+                return response(403, {'error': 'Acceso denegado: solo ADMIN y AUDITOR consultan logs'})
+            resp_logs = logs_table.scan(Limit=100)
+            items = resp_logs.get('Items', [])
+            items.sort(key=lambda x: x.get('timestamp_utc', ''), reverse=True)
+            return response(200, items)
+
+        # MÓDULO TRANSACCIONAL (RDS 1: mysql_facturacion)
+        conn = get_conn('mysql_facturacion')
+        try:
+            with conn.cursor() as cur:
+                # EMISORES
+                if '/emisores' in path:
+                    if method == 'GET':
+                        cur.execute("SELECT * FROM Emisor")
+                        return response(200, cur.fetchall())
+                    elif method == 'POST':
+                        if rol_actual != 'ADMIN':
+                            return response(403, {'error': 'Acceso denegado: solo ADMIN registra emisores'})
+                        cur.execute(
+                            "INSERT INTO Emisor (usuario_id, rfc, razon_social, regimen_fiscal, email, direccion, activo) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                            (body.get('usuario_id', uid_actual), body['rfc'], body['razon_social'], body['regimen_fiscal'], body['email'], body.get('direccion', ''), body.get('activo', 1))
+                        )
+                        return response(201, {'message': 'Emisor creado', 'id': cur.lastrowid})
+
+                # RECEPTORES (CLIENTES)
+                if '/receptores' in path:
+                    if method == 'GET':
+                        cur.execute("SELECT * FROM Receptor")
+                        return response(200, cur.fetchall())
+                    elif method == 'POST':
+                        if rol_actual not in ['ADMIN', 'FACTURADOR']:
+                            return response(403, {'error': 'Acceso denegado: AUDITOR es solo lectura'})
+                        cur.execute(
+                            "INSERT INTO Receptor (rfc, razon_social, email, direccion, activo) VALUES (%s,%s,%s,%s,%s)",
+                            (body['rfc'], body['razon_social'], body['email'], body.get('direccion', ''), body.get('activo', 1))
+                        )
+                        return response(201, {'message': 'Receptor creado', 'id': cur.lastrowid})
+
+                # FACTURAS
+                if '/facturas' in path:
+                    if method == 'GET':
+                        cur.execute("SELECT * FROM Factura_encabezado ORDER BY factura_id DESC")
+                        return response(200, cur.fetchall())
+                    elif method == 'POST':
+                        if rol_actual not in ['ADMIN', 'FACTURADOR']:
+                            return response(403, {'error': 'Acceso denegado: AUDITOR es solo lectura'})
+                        cur.execute("CALL sp_generar_folio_atomico('FAC', @nuevo_folio)")
+                        cur.execute("SELECT @nuevo_folio AS folio")
+                        folio = cur.fetchone()['folio']
+                        cur.execute(
+                            "INSERT INTO Factura_encabezado (emisor_id, cliente_id, folio, subtotal, impuestos, retenciones, total, estatus) VALUES (%s,%s,%s,0,0,0,0,'PENDIENTE')",
+                            (body['emisor_id'], body['cliente_id'], folio)
+                        )
+                        fid = cur.lastrowid
+                        registrar_auditoria(f"FAC-{fid}", uid_actual, "CREAR_FACTURA", {'folio': folio})
+                        return response(201, {'message': 'Factura creada', 'factura_id': fid, 'folio': folio})
+                    elif method == 'PUT' and body.get('accion') == 'CANCELAR':
+                        if rol_actual != 'ADMIN':
+                            return response(403, {'error': 'Acceso denegado: solo ADMIN cancela facturas'})
+                        cur.execute("CALL sp_cancelar_factura(%s)", (body['factura_id'],))
+                        registrar_auditoria(f"FAC-{body['factura_id']}", uid_actual, "CANCELAR_FACTURA", body)
+                        return response(200, {'message': 'Factura cancelada con SP'})
+
+                # DETALLES DE FACTURA
+                if '/detalles' in path:
+                    if method == 'GET':
+                        fid = query.get('factura_id')
+                        if fid:
+                            cur.execute("SELECT * FROM Factura_detalles WHERE factura_id=%s", (fid,))
+                        else:
+                            cur.execute("SELECT * FROM Factura_detalles ORDER BY detalle_id DESC")
+                        return response(200, cur.fetchall())
+
+                    elif method == 'POST':
+                        if rol_actual not in ['ADMIN', 'FACTURADOR']:
+                            return response(403, {'error': 'Acceso denegado: AUDITOR es solo lectura'})
+                        subtotal = float(body['cantidad']) * float(body['precio_unitario'])
+                        cur.execute(
+                            "INSERT INTO Factura_detalles (factura_id, servicio_id, impuesto_id, cantidad, precio_unitario, subtotal) VALUES (%s,%s,%s,%s,%s,%s)",
+                            (body['factura_id'], body['servicio_id'], body.get('impuesto_id', 1), body['cantidad'], body['precio_unitario'], subtotal)
+                        )
+                        cur.execute("CALL sp_calcular_totales_factura(%s, %s)", (body['factura_id'], body.get('aplica_retencion', 0)))
+                        cur.execute("CALL sp_aplicar_descuento_volumen(%s)", (body['factura_id'],))
+                        registrar_auditoria(f"FAC-{body['factura_id']}", uid_actual, "AGREGAR_DETALLE", body)
+                        return response(201, {'message': 'Detalle agregado y totales recalculados con SP'})
+
+                    elif method == 'PUT':
+                        if rol_actual not in ['ADMIN', 'FACTURADOR']:
+                            return response(403, {'error': 'Acceso denegado: AUDITOR es solo lectura'})
+                        detalle_id = body.get('detalle_id') or query.get('id')
+                        if not detalle_id:
+                            return response(400, {'error': 'Se requiere detalle_id para actualizar'})
+
+                        subtotal = float(body['cantidad']) * float(body['precio_unitario'])
+                        cur.execute(
+                            """
+                            UPDATE Factura_detalles
+                            SET factura_id=%s, servicio_id=%s, cantidad=%s, precio_unitario=%s, subtotal=%s
+                            WHERE detalle_id=%s
+                            """,
+                            (body['factura_id'], body['servicio_id'], body['cantidad'], body['precio_unitario'], subtotal, detalle_id)
+                        )
+                        if cur.rowcount == 0:
+                            return response(404, {'error': f'Detalle {detalle_id} no encontrado'})
+
+                        cur.execute("CALL sp_calcular_totales_factura(%s, %s)", (body['factura_id'], body.get('aplica_retencion', 0)))
+                        cur.execute("CALL sp_aplicar_descuento_volumen(%s)", (body['factura_id'],))
+                        registrar_auditoria(f"DET-{detalle_id}", uid_actual, "EDITAR_DETALLE", body)
+                        return response(200, {'message': 'Detalle actualizado y totales recalculados con SP'})
+
+                    elif method == 'DELETE':
+                        if rol_actual not in ['ADMIN', 'FACTURADOR']:
+                            return response(403, {'error': 'Acceso denegado: AUDITOR es solo lectura'})
+                        detalle_id = query.get('id') or body.get('detalle_id')
+                        if not detalle_id:
+                            return response(400, {'error': 'Se requiere detalle_id para eliminar'})
+
+                        cur.execute("SELECT factura_id FROM Factura_detalles WHERE detalle_id=%s", (detalle_id,))
+                        row_det = cur.fetchone()
+                        if not row_det:
+                            return response(404, {'error': f'Detalle {detalle_id} no encontrado'})
+
+                        fid_padre = row_det['factura_id']
+                        cur.execute("DELETE FROM Factura_detalles WHERE detalle_id=%s", (detalle_id,))
+                        cur.execute("CALL sp_calcular_totales_factura(%s, 0)", (fid_padre,))
+                        cur.execute("CALL sp_aplicar_descuento_volumen(%s)", (fid_padre,))
+                        registrar_auditoria(f"DET-{detalle_id}", uid_actual, "ELIMINAR_DETALLE", {'detalle_id': detalle_id, 'factura_id': fid_padre})
+                        return response(200, {'message': 'Detalle eliminado y totales recalculados'})
+
+                # PAGOS
+                if '/pagos' in path:
+                    tipos_validos = {'Crédito', 'Débito', 'Prepago', 'Corporativa', 'Transferencia'}
+                    if method == 'GET':
+                        cur.execute("SELECT * FROM Pagos ORDER BY pago_id DESC")
+                        return response(200, cur.fetchall())
+
+                    elif method == 'POST':
+                        if rol_actual not in ['ADMIN', 'FACTURADOR']:
+                            return response(403, {'error': 'Acceso denegado: AUDITOR es solo lectura'})
+                        tipo_tarjeta = str(body.get('tipo_tarjeta', 'Transferencia')).strip()
+                        if tipo_tarjeta not in tipos_validos:
+                            return response(400, {'error': 'Tipo de tarjeta no válido'})
+
+                        cur.execute(
+                            "INSERT INTO Pagos (factura_id, monto, tipo_tarjeta) VALUES (%s,%s,%s)",
+                            (body['factura_id'], body['monto'], tipo_tarjeta)
+                        )
+                        cur.execute("CALL sp_validar_estado_pago(%s)", (body['factura_id'],))
+                        registrar_auditoria(f"FAC-{body['factura_id']}", uid_actual, "REGISTRAR_PAGO", body)
+                        return response(201, {'message': 'Pago registrado y estado validado con SP'})
+
+                    elif method == 'PUT':
+                        if rol_actual not in ['ADMIN', 'FACTURADOR']:
+                            return response(403, {'error': 'Acceso denegado: AUDITOR es solo lectura'})
+                        pago_id = body.get('pago_id') or query.get('id')
+                        if not pago_id:
+                            return response(400, {'error': 'Se requiere pago_id para actualizar'})
+
+                        tipo_tarjeta = str(body.get('tipo_tarjeta', '')).strip()
+                        if tipo_tarjeta not in tipos_validos:
+                            return response(400, {'error': 'Tipo de tarjeta no válido'})
+
+                        cur.execute("SELECT factura_id FROM Pagos WHERE pago_id=%s", (pago_id,))
+                        row_ant = cur.fetchone()
+                        if not row_ant:
+                            return response(404, {'error': f'Pago {pago_id} no encontrado'})
+                        fid_anterior = row_ant['factura_id']
+
+                        cur.execute(
+                            "UPDATE Pagos SET factura_id=%s, monto=%s, tipo_tarjeta=%s WHERE pago_id=%s",
+                            (body['factura_id'], body['monto'], tipo_tarjeta, pago_id)
+                        )
+                        cur.execute("CALL sp_validar_estado_pago(%s)", (fid_anterior,))
+                        if int(body['factura_id']) != int(fid_anterior):
+                            cur.execute("CALL sp_validar_estado_pago(%s)", (body['factura_id'],))
+
+                        registrar_auditoria(f"PAG-{pago_id}", uid_actual, "EDITAR_PAGO", body)
+                        return response(200, {'message': 'Pago actualizado y estatus recalculado con SP'})
+
+                    elif method == 'DELETE':
+                        if rol_actual != 'ADMIN':
+                            return response(403, {'error': 'Acceso denegado: solo ADMIN elimina pagos'})
+                        pago_id = query.get('id') or body.get('pago_id')
+                        if not pago_id:
+                            return response(400, {'error': 'Se requiere pago_id para eliminar'})
+
+                        cur.execute("SELECT factura_id FROM Pagos WHERE pago_id=%s", (pago_id,))
+                        row_pago = cur.fetchone()
+                        if not row_pago:
+                            return response(404, {'error': f'Pago {pago_id} no encontrado'})
+
+                        fid_padre = row_pago['factura_id']
+                        cur.execute("DELETE FROM Pagos WHERE pago_id=%s", (pago_id,))
+                        cur.execute("CALL sp_validar_estado_pago(%s)", (fid_padre,))
+                        registrar_auditoria(f"PAG-{pago_id}", uid_actual, "ELIMINAR_PAGO", {'pago_id': pago_id, 'factura_id': fid_padre})
+                        return response(200, {'message': 'Pago eliminado y estatus de factura actualizado'})
+
+                # IMPUESTOS HISTÓRICO
+                if '/impuestos' in path:
+                    if method == 'GET':
+                        cur.execute("SELECT * FROM Impuestos_Historico ORDER BY impuesto_id ASC")
+                        return response(200, cur.fetchall())
+                    elif method == 'POST':
+                        if rol_actual != 'ADMIN':
+                            return response(403, {'error': 'Acceso denegado: solo ADMIN crea impuestos'})
+                        cur.execute(
+                            "INSERT INTO Impuestos_Historico (nombre_impuesto, tasa_porcentaje, fecha_inicio_vigencia, activo) VALUES (%s, %s, %s, 1)",
+                            (body['nombre_impuesto'], body['tasa_porcentaje'], body.get('fecha_inicio_vigencia', datetime.date.today().isoformat()))
+                        )
+                        return response(201, {'message': 'Impuesto creado', 'id': cur.lastrowid})
+                    elif method == 'PUT':
+                        if rol_actual != 'ADMIN':
+                            return response(403, {'error': 'Acceso denegado: solo ADMIN actualiza tasas'})
+                        cur.execute("CALL sp_actualizar_tasa_impuesto(%s, %s)", (body['impuesto_id'], body['nueva_tasa']))
+                        registrar_auditoria(f"IMP-{body['impuesto_id']}", uid_actual, "ACTUALIZAR_IMPUESTO", body)
+                        return response(200, {'message': 'Tasa actualizada con Stored Procedure'})
+
+                # REPORTES Y STORED PROCEDURES DIRECTOS
+                if '/reportes' in path:
+                    tipo = query.get('tipo')
+                    if tipo == 'cierre':
+                        cur.execute("CALL sp_cierre_fiscal(%s)", (query.get('periodo', '2026-11'),))
+                        return response(200, cur.fetchall())
+                    elif tipo == 'antiguedad':
+                        cur.execute("CALL sp_reporte_antiguedad_saldos()")
+                        return response(200, cur.fetchall())
+                    elif tipo == 'cfdi':
+                        cur.execute("CALL sp_generar_estructura_cfdi(%s)", (query.get('factura_id'),))
+                        return response(200, cur.fetchone())
+        finally:
+            conn.close()
+
+        return response(404, {'error': f'Ruta no encontrada: {path}'})
+    except Exception as e:
+        print("Error interno:", str(e))
+        return response(500, {'error': str(e)})

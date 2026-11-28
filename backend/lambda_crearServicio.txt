@@ -1,0 +1,127 @@
+import json
+import os
+import time
+import hmac
+import hashlib
+import base64
+import logging
+import boto3
+from decimal import Decimal
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('Servicios')
+
+REQUIRED_FIELDS = {'servicio_id', 'nombre', 'categoria_id'}
+
+HEADERS_CORS = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,x-api-key,x-validador,validador_crear_servicio',
+    'Access-Control-Allow-Methods': 'OPTIONS,POST'
+}
+
+def json_serial(obj):
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+def verify_jwt(event):
+    jwt_secret = os.environ.get('JWT_SECRET')
+    if not jwt_secret:
+        return None
+    headers = event.get('headers') or {}
+    auth = headers.get('authorization') or headers.get('Authorization') or ''
+    if not auth.startswith('Bearer '):
+        return None
+    token = auth.split(' ')[1]
+    try:
+        header, body, signature = token.split('.')
+        expected_sig = base64.urlsafe_b64encode(
+            hmac.new(jwt_secret.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest()
+        ).decode().rstrip("=")
+        if not hmac.compare_digest(signature, expected_sig):
+            return None
+        padded = body + '=' * (-len(body) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded))
+        if data.get('exp', 0) < time.time():
+            return None
+        return data
+    except Exception:
+        return None
+
+def validate_payload(body):
+    if not isinstance(body, dict):
+        raise ValueError("El cuerpo de la petición debe ser un objeto JSON válido.")
+    if not REQUIRED_FIELDS.issubset(body.keys()):
+        missing = REQUIRED_FIELDS - body.keys()
+        raise ValueError(f"Faltan campos obligatorios: {', '.join(missing)}")
+
+    caracteristicas = body.get('caracteristicas', {})
+    if not isinstance(caracteristicas, dict):
+        raise ValueError("El campo 'caracteristicas' debe ser un objeto clave-valor.")
+
+    item = {
+        'servicio_id': str(body['servicio_id']).strip(),
+        'nombre': str(body['nombre']).strip(),
+        'categoria_id': str(body['categoria_id']).strip(),
+        'caracteristicas': caracteristicas,
+        'activo': bool(body.get('activo', True)),
+    }
+
+    if 'descripcion' in body and body['descripcion'] is not None:
+        item['descripcion'] = str(body['descripcion'])
+    if 'precio_base' in body and body['precio_base'] is not None:
+        item['precio_base'] = Decimal(str(body['precio_base']))
+    if 'impuesto_porcentaje' in body and body['impuesto_porcentaje'] is not None:
+        item['impuesto_porcentaje'] = Decimal(str(body['impuesto_porcentaje']))
+
+    return item
+
+def lambda_handler(event, context):
+    method = event.get('requestContext', {}).get('http', {}).get('method') or event.get('httpMethod', 'POST')
+    if method == 'OPTIONS':
+        return {'statusCode': 200, 'headers': HEADERS_CORS, 'body': json.dumps({'message': 'CORS OK'})}
+
+    # Validar JWT y rol ADMIN
+    user_auth = verify_jwt(event)
+    if not user_auth:
+        return {'statusCode': 401, 'headers': HEADERS_CORS, 'body': json.dumps({'error': 'Token JWT requerido o expirado'})}
+    if user_auth.get('rol', '').upper() != 'ADMIN':
+        return {'statusCode': 403, 'headers': HEADERS_CORS, 'body': json.dumps({'error': 'Acceso denegado: solo ADMIN crea servicios'})}
+
+    try:
+        raw_body = event.get('body')
+        if isinstance(raw_body, str):
+            body = json.loads(raw_body, parse_float=Decimal)
+        elif isinstance(raw_body, dict):
+            body = json.loads(json.dumps(raw_body), parse_float=Decimal)
+        else:
+            body = event or {}
+
+        item = validate_payload(body)
+
+        table.put_item(
+            Item=item,
+            ConditionExpression='attribute_not_exists(servicio_id)'
+        )
+
+        return {
+            'statusCode': 201,
+            'headers': HEADERS_CORS,
+            'body': json.dumps({
+                'message': 'Servicio creado exitosamente',
+                'servicio_id': item['servicio_id'],
+                'total_caracteristicas': len(item['caracteristicas'])
+            }, default=json_serial)
+        }
+
+    except ValueError as e:
+        return {'statusCode': 400, 'headers': HEADERS_CORS, 'body': json.dumps({'error': str(e)})}
+    except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
+        return {'statusCode': 409, 'headers': HEADERS_CORS, 'body': json.dumps({'error': 'El elemento con este ID ya existe.'})}
+    except Exception as e:
+        logger.error(f"Error interno: {str(e)}", exc_info=True)
+        return {'statusCode': 500, 'headers': HEADERS_CORS, 'body': json.dumps({'error': 'Error interno del servidor.'})}

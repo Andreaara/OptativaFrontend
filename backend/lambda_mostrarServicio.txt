@@ -1,0 +1,127 @@
+import json
+import os
+import time
+import hmac
+import hashlib
+import base64
+import logging
+import boto3
+from boto3.dynamodb.conditions import Key
+from decimal import Decimal
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return int(obj) if obj % 1 == 0 else float(obj)
+        return super(DecimalEncoder, self).default(obj)
+
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('Servicios')
+
+HEADERS_CORS = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,x-api-key,x-validador,validador_crear_servicio',
+    'Access-Control-Allow-Methods': 'OPTIONS,GET'
+}
+
+def verify_jwt(event):
+    jwt_secret = os.environ.get('JWT_SECRET')
+    if not jwt_secret:
+        return None
+    headers = event.get('headers') or {}
+    auth = headers.get('authorization') or headers.get('Authorization') or ''
+    if not auth.startswith('Bearer '):
+        return None
+    token = auth.split(' ')[1]
+    try:
+        header, body, signature = token.split('.')
+        expected_sig = base64.urlsafe_b64encode(
+            hmac.new(jwt_secret.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest()
+        ).decode().rstrip("=")
+        if not hmac.compare_digest(signature, expected_sig):
+            return None
+        padded = body + '=' * (-len(body) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded))
+        if data.get('exp', 0) < time.time():
+            return None
+        return data
+    except Exception:
+        return None
+
+def lambda_handler(event, context):
+    if not isinstance(event, dict):
+        event = {}
+
+    method = event.get('requestContext', {}).get('http', {}).get('method') or event.get('httpMethod', 'GET')
+    if method == 'OPTIONS':
+        return {'statusCode': 200, 'headers': HEADERS_CORS, 'body': json.dumps({'message': 'CORS OK'})}
+
+    # Validar JWT y roles permitidos para lectura
+    user_auth = verify_jwt(event)
+    if not user_auth:
+        return {'statusCode': 401, 'headers': HEADERS_CORS, 'body': json.dumps({'error': 'Token JWT requerido o expirado'})}
+    if user_auth.get('rol', '').upper() not in ['ADMIN', 'FACTURADOR', 'AUDITOR']:
+        return {'statusCode': 403, 'headers': HEADERS_CORS, 'body': json.dumps({'error': 'Rol sin permisos de lectura'})}
+
+    try:
+        query_params = event.get('queryStringParameters') or {}
+        servicio_id = query_params.get('servicio_id') or event.get('servicio_id')
+        categoria_id = query_params.get('categoria_id')
+
+        # ESCENARIO 1: Búsqueda puntual por Partition Key (servicio_id)
+        if servicio_id:
+            response = table.get_item(Key={'servicio_id': str(servicio_id)})
+            item = response.get('Item')
+            if not item:
+                return {
+                    'statusCode': 404,
+                    'headers': HEADERS_CORS,
+                    'body': json.dumps({'error': 'Servicio no encontrado'})
+                }
+            return {
+                'statusCode': 200,
+                'headers': HEADERS_CORS,
+                'body': json.dumps(item, cls=DecimalEncoder)
+            }
+
+        # ESCENARIO 2: Filtrado por GSI (categoria_id-index)
+        if categoria_id:
+            response = table.query(
+                IndexName='categoria_id-index',
+                KeyConditionExpression=Key('categoria_id').eq(str(categoria_id))
+            )
+            items = response.get('Items', [])
+            items.sort(key=lambda x: x.get('servicio_id', ''))
+            return {
+                'statusCode': 200,
+                'headers': HEADERS_CORS,
+                'body': json.dumps(items, cls=DecimalEncoder)
+            }
+
+        # ESCENARIO 3: Listado completo con paginación
+        items = []
+        response = table.scan()
+        items.extend(response.get('Items', []))
+        while 'LastEvaluatedKey' in response:
+            response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+            items.extend(response.get('Items', []))
+
+        items.sort(key=lambda x: x.get('servicio_id', ''))
+
+        return {
+            'statusCode': 200,
+            'headers': HEADERS_CORS,
+            'body': json.dumps(items, cls=DecimalEncoder)
+        }
+
+    except Exception as e:
+        logger.error(f"Error interno en GET: {str(e)}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'headers': HEADERS_CORS,
+            'body': json.dumps({'error': 'Error interno del servidor.'})
+        }

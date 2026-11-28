@@ -1,0 +1,98 @@
+import json
+import os
+import time
+import hmac
+import hashlib
+import base64
+import logging
+import boto3
+from botocore.exceptions import ClientError
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('Servicios')
+
+HEADERS_CORS = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,x-api-key,x-validador,validador_eliminar_servicio,*',
+    'Access-Control-Allow-Methods': 'OPTIONS,DELETE'
+}
+
+def verify_jwt(event):
+    jwt_secret = os.environ.get('JWT_SECRET')
+    if not jwt_secret:
+        return None
+    headers = event.get('headers') or {}
+    auth = headers.get('authorization') or headers.get('Authorization') or ''
+    if not auth.startswith('Bearer '):
+        return None
+    token = auth.split(' ')[1]
+    try:
+        header, body, signature = token.split('.')
+        expected_sig = base64.urlsafe_b64encode(
+            hmac.new(jwt_secret.encode(), f"{header}.{body}".encode(), hashlib.sha256).digest()
+        ).decode().rstrip("=")
+        if not hmac.compare_digest(signature, expected_sig):
+            return None
+        padded = body + '=' * (-len(body) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded))
+        if data.get('exp', 0) < time.time():
+            return None
+        return data
+    except Exception:
+        return None
+
+def lambda_handler(event, context):
+    if not isinstance(event, dict):
+        event = {}
+
+    method = event.get('requestContext', {}).get('http', {}).get('method') or event.get('httpMethod', 'DELETE')
+    if method == 'OPTIONS':
+        return {'statusCode': 200, 'headers': HEADERS_CORS, 'body': json.dumps({'message': 'CORS OK'})}
+
+    user_auth = verify_jwt(event)
+    if not user_auth:
+        return {'statusCode': 401, 'headers': HEADERS_CORS, 'body': json.dumps({'error': 'Token JWT requerido o expirado'})}
+    if user_auth.get('rol', '').upper() != 'ADMIN':
+        return {'statusCode': 403, 'headers': HEADERS_CORS, 'body': json.dumps({'error': 'Acceso denegado: solo ADMIN elimina servicios'})}
+
+    try:
+        query_params = event.get('queryStringParameters')
+        if not isinstance(query_params, dict):
+            query_params = {}
+
+        servicio_id = query_params.get('servicio_id')
+
+        if not servicio_id and event.get('body'):
+            raw_body = event.get('body')
+            body = json.loads(raw_body) if isinstance(raw_body, str) else raw_body
+            if isinstance(body, dict):
+                servicio_id = body.get('servicio_id')
+
+        if not servicio_id:
+            servicio_id = event.get('servicio_id')
+
+        if not servicio_id:
+            return {'statusCode': 400, 'headers': HEADERS_CORS, 'body': json.dumps({'error': "Se requiere el parámetro 'servicio_id'"})}
+
+        table.delete_item(
+            Key={'servicio_id': str(servicio_id)},
+            ConditionExpression='attribute_exists(servicio_id)'
+        )
+
+        return {
+            'statusCode': 200,
+            'headers': HEADERS_CORS,
+            'body': json.dumps({'message': 'Servicio eliminado exitosamente', 'servicio_id': str(servicio_id)})
+        }
+
+    except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
+        return {'statusCode': 404, 'headers': HEADERS_CORS, 'body': json.dumps({'error': 'El servicio especificado no existe.'})}
+    except ClientError as e:
+        return {'statusCode': 500, 'headers': HEADERS_CORS, 'body': json.dumps({'error': f"Error de AWS DynamoDB: {e.response['Error']['Message']}"})}
+    except Exception as e:
+        logger.error(f"Error interno en DELETE: {str(e)}", exc_info=True)
+        return {'statusCode': 500, 'headers': HEADERS_CORS, 'body': json.dumps({'error': f'Error interno del servidor: {str(e)}'})}

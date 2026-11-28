@@ -9,10 +9,17 @@ SELECT * FROM Emisor;
 
 # Tabla de Categorias
 CREATE TABLE Categorias (
-                            categoria_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                            categoria_id VARCHAR(20) PRIMARY KEY,
                             nombre VARCHAR(100) NOT NULL,
-                            descripcion TEXT
+                            descripcion VARCHAR(255)
 );
+
+INSERT INTO Categorias (categoria_id, nombre, descripcion) VALUES
+                            ('CAT-01', 'Consultoría Fiscal y Tributaria', 'Asesoría fiscal, planeación tributaria y cumplimiento SAT'),
+                            ('CAT-02', 'Auditoría y Contabilidad', 'Auditoría contable, conciliación bancaria y dictámenes'),
+                            ('CAT-03', 'Sistemas ERP y Timbrado CFDI', 'Soporte ERP, timbrado masivo CFDI y migración cloud'),
+                            ('CAT-04', 'Gestión de Nómina y RRHH', 'Cálculo de nómina, retenciones ISR/IVA y seguridad social'),
+                            ('CAT-05', 'Ciberseguridad y Análisis Financiero', 'Seguridad de datos contables y reportes ejecutivos');
 
 # Tabla de Receptor (Clientes)
 CREATE TABLE Receptor (

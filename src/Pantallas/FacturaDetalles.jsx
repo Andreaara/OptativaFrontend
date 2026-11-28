@@ -111,22 +111,19 @@ export default function FacturaDetalles() {
         setCargando(true);
         try {
             if (editando) {
-                setDetalles((prev) =>
-                    prev.map((item) =>
-                        item.detalle_id === formData.detalle_id
-                            ? {
-                                ...item,
-                                factura_id: facturaIdValido,
-                                servicio_id: servicioLimpio,
-                                cantidad: cantidadValida,
-                                precio_unitario: precioValido,
-                                subtotal: (cantidadValida * precioValido).toFixed(2),
-                            }
-                            : item
-                    )
-                );
+                await apiFetch('/detalles', {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        detalle_id: formData.detalle_id,
+                        factura_id: facturaIdValido,
+                        servicio_id: servicioLimpio,
+                        cantidad: cantidadValida,
+                        precio_unitario: precioValido,
+                    }),
+                });
                 resetForm();
-                toast.fire({ icon: 'success', title: 'Detalle actualizado en vista' });
+                await alertaExito('Detalle actualizado y totales recalculados.');
+                await cargarDetalles();
             } else {
                 await apiFetch('/detalles', {
                     method: 'POST',
@@ -138,7 +135,7 @@ export default function FacturaDetalles() {
                     }),
                 });
                 resetForm();
-                await alertaExito('Detalle agregado y totales recalculados con Stored Procedures.');
+                await alertaExito('Detalle agregado y totales recalculados.');
                 await cargarDetalles();
             }
         } catch (err) {
@@ -152,11 +149,21 @@ export default function FacturaDetalles() {
         const confirmado = await confirmarEliminar();
         if (!confirmado) return;
 
-        setDetalles((prev) => prev.filter((d) => d.detalle_id !== item.detalle_id));
-        if (formData.detalle_id === item.detalle_id) {
-            resetForm();
+        setCargando(true);
+        try {
+            await apiFetch(`/detalles?id=${item.detalle_id}`, {
+                method: 'DELETE',
+            });
+            if (formData.detalle_id === item.detalle_id) {
+                resetForm();
+            }
+            toast.fire({ icon: 'success', title: 'Detalle eliminado de MySQL' });
+            await cargarDetalles();
+        } catch (err) {
+            alertaError(err.message);
+        } finally {
+            setCargando(false);
         }
-        toast.fire({ icon: 'success', title: 'Detalle eliminado' });
     };
 
     const handleVerCfdi = async (facturaId) => {

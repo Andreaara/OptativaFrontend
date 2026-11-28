@@ -18,10 +18,11 @@ import {
 } from '../Utils/Alerts.js';
 import '../Estilos/Estilos.css';
 
-const TIPOS_TARJETA_VALIDOS = ['Crédito', 'Débito', 'Prepago', 'Corporativa'];
+const TIPOS_TARJETA_VALIDOS = ['Crédito', 'Débito', 'Prepago', 'Corporativa', 'Transferencia'];
 
 export default function Pagos() {
     const [pagos, setPagos] = useState([]);
+    const [facturas, setFacturas] = useState([]);
     const [cargando, setCargando] = useState(false);
     const [antiguedad, setAntiguedad] = useState(null);
     const rol = obtenerRolActual();
@@ -37,11 +38,15 @@ export default function Pagos() {
     const [editando, setEditando] = useState(false);
     const [modalOpen, setModalOpen] = useState(false);
 
-    const cargarPagos = async () => {
+    const cargarDatos = async () => {
         setCargando(true);
         try {
-            const data = await apiFetch('/pagos');
-            setPagos(Array.isArray(data) ? data : []);
+            const [dataPagos, dataFacturas] = await Promise.all([
+                apiFetch('/pagos'),
+                apiFetch('/facturas').catch(() => []),
+            ]);
+            setPagos(Array.isArray(dataPagos) ? dataPagos : []);
+            setFacturas(Array.isArray(dataFacturas) ? dataFacturas : []);
         } catch (err) {
             alertaError(err.message);
         } finally {
@@ -50,12 +55,22 @@ export default function Pagos() {
     };
 
     useEffect(() => {
-        cargarPagos();
+        cargarDatos();
     }, []);
 
     const handleChange = (e) => {
         const { name, value } = e.target;
-        setFormData((prev) => ({ ...prev, [name]: value }));
+        setFormData((prev) => {
+            const next = { ...prev, [name]: value };
+            // Si elige una factura nueva y el monto está vacío, autocompleta su total
+            if (name === 'factura_id' && !editando) {
+                const fac = facturas.find((f) => String(f.factura_id) === String(value));
+                if (fac && parseFloat(fac.total) > 0) {
+                    next.monto = parseFloat(fac.total).toFixed(2);
+                }
+            }
+            return next;
+        });
     };
 
     const resetForm = () => {
@@ -76,7 +91,13 @@ export default function Pagos() {
     };
 
     const handleEdit = (pago) => {
-        setFormData(pago);
+        setFormData({
+            pago_id: pago.pago_id,
+            factura_id: String(pago.factura_id),
+            monto: String(pago.monto),
+            tipo_tarjeta: pago.tipo_tarjeta || '',
+            fecha_pago: pago.fecha_pago || '',
+        });
         setEditando(true);
         setModalOpen(true);
     };
@@ -84,7 +105,7 @@ export default function Pagos() {
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        const facturaIdValido = validarEnteroPositivo(formData.factura_id, 'ID Factura');
+        const facturaIdValido = validarEnteroPositivo(formData.factura_id, 'Factura');
         if (!facturaIdValido) return;
 
         const montoValido = validarMontoPositivo(formData.monto, 'Monto');
@@ -98,20 +119,18 @@ export default function Pagos() {
         setCargando(true);
         try {
             if (editando) {
-                setPagos((prev) =>
-                    prev.map((item) =>
-                        item.pago_id === formData.pago_id
-                            ? {
-                                ...item,
-                                factura_id: facturaIdValido,
-                                monto: montoValido,
-                                tipo_tarjeta: formData.tipo_tarjeta,
-                            }
-                            : item
-                    )
-                );
+                await apiFetch('/pagos', {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        pago_id: formData.pago_id,
+                        factura_id: facturaIdValido,
+                        monto: montoValido,
+                        tipo_tarjeta: formData.tipo_tarjeta,
+                    }),
+                });
                 resetForm();
-                toast.fire({ icon: 'success', title: 'Pago actualizado en vista' });
+                await alertaExito('Pago actualizado y estatus de factura recalculado.');
+                await cargarDatos();
             } else {
                 await apiFetch('/pagos', {
                     method: 'POST',
@@ -122,8 +141,8 @@ export default function Pagos() {
                     }),
                 });
                 resetForm();
-                await alertaExito('Pago registrado y estatus de factura validado con Stored Procedure.');
-                await cargarPagos();
+                await alertaExito('Pago registrado y estatus de factura validado.');
+                await cargarDatos();
             }
         } catch (err) {
             alertaError(err.message);
@@ -133,14 +152,29 @@ export default function Pagos() {
     };
 
     const handleDelete = async (pago_id) => {
+        if (rol !== 'ADMIN') {
+            alertaError('Solo el administrador puede eliminar pagos registrados.');
+            return;
+        }
+
         const confirmado = await confirmarEliminar();
         if (!confirmado) return;
 
-        setPagos((prev) => prev.filter((item) => item.pago_id !== pago_id));
-        if (formData.pago_id === pago_id) {
-            resetForm();
+        setCargando(true);
+        try {
+            await apiFetch(`/pagos?id=${pago_id}`, {
+                method: 'DELETE',
+            });
+            if (formData.pago_id === pago_id) {
+                resetForm();
+            }
+            toast.fire({ icon: 'success', title: 'Registro de pago eliminado' });
+            await cargarDatos();
+        } catch (err) {
+            alertaError(err.message);
+        } finally {
+            setCargando(false);
         }
-        toast.fire({ icon: 'success', title: 'Registro de pago eliminado' });
     };
 
     const handleVerAntiguedad = async () => {
@@ -160,7 +194,7 @@ export default function Pagos() {
         { label: 'ID Pago' },
         { label: 'ID Factura' },
         { label: 'Monto' },
-        { label: 'Tipo de Tarjeta' },
+        { label: 'Método / Tarjeta' },
         { label: 'Fecha de Pago' },
         ...(rol !== 'AUDITOR' ? [{ label: 'Acciones', className: 'col-acciones' }] : []),
     ];
@@ -206,7 +240,7 @@ export default function Pagos() {
 
             {cargando ? (
                 <div className="cargando-texto">
-                    <span className="spinner" /> Sincronizando pagos con AWS...
+                    <span className="spinner" /> Sincronizando pagos...
                 </div>
             ) : (
                 <DataTable
@@ -228,7 +262,9 @@ export default function Pagos() {
                                 <td>
                                     <div className="acciones-tabla">
                                         <EditButton onClick={() => handleEdit(item)} />
-                                        <DeleteButton onClick={() => handleDelete(item.pago_id)} />
+                                        {rol === 'ADMIN' && (
+                                            <DeleteButton onClick={() => handleDelete(item.pago_id)} />
+                                        )}
                                     </div>
                                 </td>
                             )}
@@ -248,17 +284,27 @@ export default function Pagos() {
                         </h3>
 
                         <form onSubmit={handleSubmit} className="modal-form">
-                            <div style={{ display: 'flex', gap: '12px' }}>
-                                <Input
-                                    label="ID Factura (FK)"
-                                    type="number"
-                                    min="1"
+                            <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                                <label className="label">Factura</label>
+                                <select
                                     name="factura_id"
                                     value={formData.factura_id}
                                     onChange={handleChange}
-                                    placeholder="Ej. 1"
+                                    className="modal-input"
                                     required
-                                />
+                                >
+                                    <option value="">Seleccionar factura...</option>
+                                    {facturas
+                                        .filter((f) => f.estatus !== 'CANCELADA' || String(f.factura_id) === String(formData.factura_id))
+                                        .map((f) => (
+                                            <option key={f.factura_id} value={f.factura_id}>
+                                                #{f.factura_id} - {f.folio} | Total: ${parseFloat(f.total || 0).toFixed(2)} ({f.estatus})
+                                            </option>
+                                        ))}
+                                </select>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '12px' }}>
                                 <Input
                                     label="Monto ($)"
                                     type="number"
@@ -270,23 +316,24 @@ export default function Pagos() {
                                     placeholder="0.00"
                                     required
                                 />
-                            </div>
 
-                            <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                                <label className="label">Tipo de Tarjeta</label>
-                                <select
-                                    name="tipo_tarjeta"
-                                    value={formData.tipo_tarjeta}
-                                    onChange={handleChange}
-                                    className="modal-input"
-                                    required
-                                >
-                                    <option value="">Seleccionar tipo...</option>
-                                    <option value="Crédito">Crédito</option>
-                                    <option value="Débito">Débito</option>
-                                    <option value="Prepago">Prepago</option>
-                                    <option value="Corporativa">Corporativa</option>
-                                </select>
+                                <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                                    <label className="label">Método / Tipo de Tarjeta</label>
+                                    <select
+                                        name="tipo_tarjeta"
+                                        value={formData.tipo_tarjeta}
+                                        onChange={handleChange}
+                                        className="modal-input"
+                                        required
+                                    >
+                                        <option value="">Seleccionar método...</option>
+                                        {TIPOS_TARJETA_VALIDOS.map((tipo) => (
+                                            <option key={tipo} value={tipo}>
+                                                {tipo}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
                             </div>
 
                             <div className="modal-acciones">

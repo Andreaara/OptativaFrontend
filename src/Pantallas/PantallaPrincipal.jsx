@@ -254,8 +254,8 @@ export default function PantallaServiciosAWS() {
       limpiarEstadoModal();
       await alertaExito(
           esEdicion
-              ? `Servicio actualizado con ${Object.keys(caracteristicasObj).length} características en DynamoDB.`
-              : `Servicio registrado con ${Object.keys(caracteristicasObj).length} características en DynamoDB.`
+              ? `Servicio actualizado con ${Object.keys(caracteristicasObj).length} características.`
+              : `Servicio registrado con ${Object.keys(caracteristicasObj).length} características.`
       );
       await cargarDatos();
     } catch (err) {

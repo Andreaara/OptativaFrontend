@@ -202,7 +202,7 @@ export default function Emisor() {
 
     const handleDelete = async (emisor_id) => {
         if (rol !== 'ADMIN') {
-            alertaError('Solo el rol ADMIN puede eliminar emisores.');
+            alertaError('Solo el administrador puede eliminar emisores.');
             return;
         }
 
@@ -241,7 +241,7 @@ export default function Emisor() {
 
             {cargando ? (
                 <div className="cargando-texto">
-                    <span className="spinner" /> Cargando emisores desde AWS...
+                    <span className="spinner" /> Cargando emisores...
                 </div>
             ) : (
                 <DataTable
@@ -348,7 +348,7 @@ export default function Emisor() {
                                 name="direccion"
                                 value={formData.direccion}
                                 onChange={handleChange}
-                                placeholder="Calle, número, colonia, CP"
+                                placeholder="Calle, número, colonia, CP, Ciudad, Estado"
                                 maxLength={250}
                                 required
                             />

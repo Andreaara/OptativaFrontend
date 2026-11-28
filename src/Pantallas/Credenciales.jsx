@@ -169,7 +169,7 @@ export default function Credenciales() {
                     }),
                 });
                 resetForm();
-                await alertaExito('Credencial creada y hasheada (SHA-256) en mysql_seguridad.');
+                await alertaExito('Credencial creada.');
                 await cargarCredenciales();
             }
         } catch (err) {
@@ -181,7 +181,7 @@ export default function Credenciales() {
 
     const handleDelete = async (credencial_id) => {
         if (rol !== 'ADMIN') {
-            alertaError('Solo el rol ADMIN puede eliminar credenciales.');
+            alertaError('Solo el administrador puede eliminar credenciales.');
             return;
         }
 

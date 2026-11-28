@@ -109,7 +109,7 @@ export default function Impuestos() {
       inputValue: imp.tasa_porcentaje,
       inputAttributes: { step: '0.01', min: '0', max: '100' },
       showCancelButton: true,
-      confirmButtonText: 'Actualizar con SP',
+      confirmButtonText: 'Actualizar Impuesto',
       cancelButtonText: 'Cancelar',
       inputValidator: (value) => {
         const num = parseFloat(value);
@@ -198,7 +198,7 @@ export default function Impuestos() {
                                   style={{ padding: '6px 12px', fontSize: '12px' }}
                                   onClick={() => handleActualizarTasa(imp)}
                               >
-                                Actualizar Tasa (SP)
+                                Actualizar Tasa
                               </button>
                             </div>
                           </td>
@@ -222,7 +222,7 @@ export default function Impuestos() {
                       name="nombre_impuesto"
                       value={formData.nombre_impuesto}
                       onChange={(e) => setFormData({ ...formData, nombre_impuesto: e.target.value })}
-                      placeholder="Ej. IVA General 16%"
+                      placeholder="Ej. IVA General"
                       maxLength={50}
                       required
                   />

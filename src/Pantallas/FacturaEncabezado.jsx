@@ -118,7 +118,7 @@ export default function FacturaEncabezado() {
     // Ejecuta sp_cancelar_factura en RDS (Solo ADMIN)
     const handleCancelarFactura = async (item) => {
         if (rol !== 'ADMIN') {
-            alertaError('Solo el rol ADMIN puede cancelar facturas.');
+            alertaError('Solo el administrador puede cancelar facturas.');
             return;
         }
         if (item.estatus === 'CANCELADA') {
@@ -207,7 +207,7 @@ export default function FacturaEncabezado() {
 
             {cargando ? (
                 <div className="cargando-texto">
-                    <span className="spinner" /> Sincronizando facturas con AWS...
+                    <span className="spinner" /> Sincronizando facturas...
                 </div>
             ) : (
                 <DataTable
@@ -243,7 +243,7 @@ export default function FacturaEncabezado() {
                             <span className="material-symbols-outlined">
                                 {editando ? 'visibility' : 'post_add'}
                             </span>
-                            {editando ? 'Resumen de Factura' : 'Nueva Factura (Folio Automático SP)'}
+                            {editando ? 'Resumen de Factura' : 'Nueva Factura'}
                         </h3>
 
                         <form onSubmit={handleSubmit} className="modal-form">

@@ -78,7 +78,7 @@ export default function Categorias() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (rol !== 'ADMIN') {
-            alertaError('Solo el rol ADMIN puede administrar categorías.');
+            alertaError('Solo el administrador puede administrar categorías.');
             return;
         }
 
@@ -138,7 +138,7 @@ export default function Categorias() {
 
     const handleDelete = async (categoria_id) => {
         if (rol !== 'ADMIN') {
-            alertaError('Solo el rol ADMIN puede eliminar categorías.');
+            alertaError('Solo el administrador puede eliminar categorías.');
             return;
         }
 
@@ -180,7 +180,7 @@ export default function Categorias() {
 
             {cargando ? (
                 <div className="cargando-texto">
-                    <span className="spinner" /> Sincronizando categorías con AWS...
+                    <span className="spinner" /> Sincronizando categorías...
                 </div>
             ) : (
                 <DataTable

@@ -196,7 +196,7 @@ export default function Usuarios() {
           }),
         });
         resetForm();
-        await alertaExito('Usuario registrado en mysql_seguridad.');
+        await alertaExito('Usuario registrado.');
         await cargarUsuarios();
       }
     } catch (err) {
@@ -208,7 +208,7 @@ export default function Usuarios() {
 
   const handleDelete = async (usuario_id) => {
     if (rol !== 'ADMIN') {
-      alertaError('Solo el rol ADMIN puede eliminar usuarios.');
+      alertaError('Solo el administrador puede eliminar usuarios.');
       return;
     }
 
